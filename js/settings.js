@@ -1,5 +1,6 @@
 import * as db from "./db.js";
-import { toast, notifyDataChanged, escapeHtml, show } from "./app.js";
+import { toast, notifyDataChanged, escapeHtml, show, bus } from "./app.js";
+import * as sync from "./sync.js";
 
 export async function renderSettings(root) {
   const counters = await db.listCounters();
@@ -45,6 +46,42 @@ export async function renderSettings(root) {
     </section>
 
     <section class="mt-8">
+      <h3 class="text-label-caps uppercase tracking-widest text-on-surface-variant mb-2">Sincronizzazione cloud</h3>
+      <p class="text-on-surface-variant text-sm mb-3">
+        Sincronizza i dati tra più device tramite il tuo endpoint su evemilano.com.
+        I dati restano sul tuo server, protetti da token.
+      </p>
+      <div class="space-y-2">
+        <label class="block">
+          <span class="text-xs font-semibold text-on-surface-variant">Endpoint URL</span>
+          <input type="url" id="sync-endpoint" placeholder="https://www.evemilano.com/cntr/api/sync.php" autocomplete="off"
+            class="mt-1 w-full rounded-xl border border-outline-variant px-3 py-2 bg-surface-container-lowest text-on-surface focus:outline-none focus:border-primary">
+        </label>
+        <label class="block">
+          <span class="text-xs font-semibold text-on-surface-variant">Token segreto</span>
+          <input type="password" id="sync-token" placeholder="Incolla il token configurato sul server" autocomplete="off"
+            class="mt-1 w-full rounded-xl border border-outline-variant px-3 py-2 bg-surface-container-lowest text-on-surface focus:outline-none focus:border-primary">
+        </label>
+      </div>
+      <div class="flex flex-wrap gap-2 mt-3">
+        <button type="button" id="btn-sync-save"
+          class="bg-primary text-on-primary px-4 py-2.5 rounded-xl font-semibold active:scale-95 transition-transform">
+          Salva e testa
+        </button>
+        <button type="button" id="btn-sync-now"
+          class="flex items-center gap-2 bg-surface-container-lowest text-on-surface border border-outline-variant px-4 py-2.5 rounded-xl font-semibold active:scale-95 transition-transform">
+          <span class="material-symbols-outlined" style="font-size:20px">sync</span>
+          Sincronizza ora
+        </button>
+        <button type="button" id="btn-sync-clear"
+          class="text-on-surface-variant text-sm underline px-2 py-2.5">
+          Disconnetti questo device
+        </button>
+      </div>
+      <p id="sync-status" class="text-on-surface-variant text-sm mt-3"></p>
+    </section>
+
+    <section class="mt-8">
       <h3 class="text-label-caps uppercase tracking-widest text-error mb-2">Zona pericolosa</h3>
       <button type="button" id="btn-wipe"
         class="flex items-center gap-2 bg-error-container text-error border border-error/30 px-4 py-2.5 rounded-xl font-semibold active:scale-95 transition-transform">
@@ -72,6 +109,8 @@ export async function renderSettings(root) {
   root.querySelector("#import-file").addEventListener("change", (e) => {
     doImport(e.target.files[0]).finally(() => { e.target.value = ""; });
   });
+
+  setupSyncSection(root);
 
   root.querySelector("#btn-wipe").addEventListener("click", async () => {
     if (!confirm("Cancellare TUTTI i contatori e i tap?\nNon si può tornare indietro.")) return;
@@ -159,6 +198,84 @@ function renderCounterList(root, counters, activeId) {
       notifyDataChanged();
     });
   });
+}
+
+function setupSyncSection(root) {
+  const endpointInput = root.querySelector("#sync-endpoint");
+  const tokenInput = root.querySelector("#sync-token");
+  const statusEl = root.querySelector("#sync-status");
+  const cfg = sync.getConfig();
+  if (cfg) {
+    endpointInput.value = cfg.endpoint || "";
+    tokenInput.value = cfg.token || "";
+  }
+  renderSyncStatus(statusEl);
+
+  const onStatus = () => renderSyncStatus(statusEl);
+  bus.addEventListener("sync-status", onStatus);
+
+  root.querySelector("#btn-sync-save").addEventListener("click", async () => {
+    const endpoint = endpointInput.value.trim();
+    const token = tokenInput.value.trim();
+    if (!endpoint || !token) {
+      statusEl.textContent = "Compila entrambi i campi.";
+      return;
+    }
+    sync.setConfig({ endpoint, token });
+    statusEl.textContent = "Test in corso…";
+    try {
+      await sync.fetchRemote();
+      statusEl.textContent = "Connessione OK. Avvio sync…";
+      await sync.syncNow();
+      renderSyncStatus(statusEl);
+      toast("Sync configurata");
+    } catch (err) {
+      statusEl.textContent = "Errore: " + (err.message || err);
+    }
+  });
+
+  root.querySelector("#btn-sync-now").addEventListener("click", async () => {
+    statusEl.textContent = "Sync in corso…";
+    try {
+      await sync.syncNow();
+      renderSyncStatus(statusEl);
+      toast("Sincronizzato");
+    } catch (err) {
+      statusEl.textContent = "Errore: " + (err.message || err);
+    }
+  });
+
+  root.querySelector("#btn-sync-clear").addEventListener("click", () => {
+    if (!confirm("Disconnetti questo device dal sync cloud?\nI dati locali restano, ma non saranno più sincronizzati.")) return;
+    sync.setConfig(null);
+    endpointInput.value = "";
+    tokenInput.value = "";
+    statusEl.textContent = "Device disconnesso.";
+    toast("Sync disattivata");
+  });
+}
+
+function renderSyncStatus(el) {
+  const cfg = sync.getConfig();
+  if (!cfg) { el.textContent = "Non configurato."; return; }
+  const st = sync.getState();
+  if (st.lastError) { el.textContent = "Errore: " + st.lastError; return; }
+  if (st.lastSyncAt) {
+    el.textContent = "Ultima sync: " + formatAgo(st.lastSyncAt);
+  } else {
+    el.textContent = "In attesa della prima sync…";
+  }
+}
+
+function formatAgo(ts) {
+  const secs = Math.max(0, Math.floor((Date.now() - ts) / 1000));
+  if (secs < 60) return `${secs}s fa`;
+  const m = Math.floor(secs / 60);
+  if (m < 60) return `${m} min fa`;
+  const h = Math.floor(m / 60);
+  if (h < 24) return `${h}h fa`;
+  const d = Math.floor(h / 24);
+  return `${d} giorni fa`;
 }
 
 async function doAdd(root) {

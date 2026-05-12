@@ -6,6 +6,11 @@ CLAUDE.md
 # Backup esportati dall'app
 contaapp-*.json
 
+# Sync server: config con token + file dati
+api/config.php
+api/data.php
+api/data.php.tmp
+
 # OS / editor
 .DS_Store
 Thumbs.db

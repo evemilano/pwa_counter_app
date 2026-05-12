@@ -1,4 +1,4 @@
-const CACHE = "counter-v6";
+const CACHE = "counter-v12";
 const ASSETS = [
   "./",
   "./index.html",
@@ -10,17 +10,19 @@ const ASSETS = [
   "./js/stats.js",
   "./js/history.js",
   "./js/settings.js",
+  "./js/sync.js",
   "./icons/icon-192.png",
   "./icons/icon-512.png",
   "./icons/icon-maskable.png",
   "./icons/shortcut-plus.png",
+  "./fonts/inter-variable.woff2",
+  "./fonts/montserrat-variable.woff2",
+  "./fonts/material-symbols-outlined.woff2",
 ];
 
 const ALLOWED_CDN = [
   "https://esm.sh",
   "https://cdn.tailwindcss.com",
-  "https://fonts.googleapis.com",
-  "https://fonts.gstatic.com",
 ];
 
 self.addEventListener("install", (e) => {
@@ -39,24 +41,45 @@ self.addEventListener("activate", (e) => {
 
 self.addEventListener("fetch", (e) => {
   const req = e.request;
-  if (req.method !== "GET") return;
   const url = new URL(req.url);
   const sameOrigin = url.origin === self.location.origin;
+
+  if (sameOrigin && url.pathname.includes("/api/")) return;
+  if (req.method !== "GET") return;
+
   const allowedCdn = ALLOWED_CDN.some((o) => req.url.startsWith(o));
   if (!sameOrigin && !allowedCdn) return;
 
+  const isAppShell = sameOrigin && /\.(html|js|css|webmanifest)$|\/$/.test(url.pathname);
+
   e.respondWith(
-    caches.match(req).then((cached) => {
-      const fetched = fetch(req)
-        .then((res) => {
-          if (res.ok || res.type === "opaque") {
-            const copy = res.clone();
-            caches.open(CACHE).then((c) => c.put(req, copy));
-          }
-          return res;
-        })
-        .catch(() => cached);
-      return cached || fetched;
-    })
+    isAppShell ? networkFirst(req) : staleWhileRevalidate(req)
   );
 });
+
+function networkFirst(req) {
+  return fetch(req, { cache: "no-store" })
+    .then((res) => {
+      if (res.ok) {
+        const copy = res.clone();
+        caches.open(CACHE).then((c) => c.put(req, copy));
+      }
+      return res;
+    })
+    .catch(() => caches.match(req));
+}
+
+function staleWhileRevalidate(req) {
+  return caches.match(req).then((cached) => {
+    const fetched = fetch(req)
+      .then((res) => {
+        if (res.ok || res.type === "opaque") {
+          const copy = res.clone();
+          caches.open(CACHE).then((c) => c.put(req, copy));
+        }
+        return res;
+      })
+      .catch(() => cached);
+    return cached || fetched;
+  });
+}

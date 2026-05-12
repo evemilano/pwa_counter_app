@@ -3,6 +3,7 @@ import { renderDashboard } from "./dashboard.js";
 import { renderStats } from "./stats.js";
 import { renderHistory } from "./history.js";
 import { renderSettings } from "./settings.js";
+import * as sync from "./sync.js";
 
 const VIEWS = {
   dashboard: { el: document.getElementById("view-dashboard"), render: renderDashboard, title: "Counter" },
@@ -173,6 +174,7 @@ window.addEventListener("appinstalled", () => {
 async function main() {
   await handleShortcut();
   show("dashboard");
+  sync.init();
 
   if ("serviceWorker" in navigator) {
     try {

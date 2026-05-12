@@ -72,48 +72,37 @@ export async function renderHistory(root) {
 
   root.querySelectorAll("[data-edit-tap]").forEach((btn) => {
     btn.addEventListener("click", () => {
-      const id = Number(btn.dataset.editTap);
-      const ts = Number(btn.dataset.editTs);
-      openEditTapModal(id, ts);
+      const row = btn.closest(".history-row");
+      root.querySelectorAll(".history-row.editing").forEach((r) => {
+        if (r !== row) r.classList.remove("editing");
+      });
+      row.classList.add("editing");
+      const input = row.querySelector(".edit-input");
+      setTimeout(() => input.focus(), 0);
     });
   });
-}
 
-function openEditTapModal(tapId, currentTs) {
-  const root = document.getElementById("modal-root");
-  const value = toLocalInputValue(currentTs);
-  root.innerHTML = `
-    <div class="modal-backdrop" data-modal-close></div>
-    <div class="modal-card" role="dialog" aria-modal="true" aria-label="Modifica orario">
-      <h3 class="font-display font-bold text-lg text-on-surface mb-1">Modifica orario</h3>
-      <p class="text-on-surface-variant text-sm mb-4">Cambia la data e l'ora di questo tap.</p>
-      <input type="datetime-local" id="edit-tap-input" value="${value}" step="60"
-        class="w-full rounded-xl border border-outline-variant px-3 py-2 bg-surface-container-low text-on-surface focus:outline-none focus:border-primary">
-      <div class="flex justify-end gap-2 mt-4">
-        <button type="button" class="px-4 py-2 rounded-xl text-on-surface-variant font-semibold active:scale-95 transition-transform" data-modal-close>Annulla</button>
-        <button type="button" id="edit-tap-save" class="bg-primary text-on-primary px-4 py-2 rounded-xl font-semibold active:scale-95 transition-transform">Salva</button>
-      </div>
-    </div>
-  `;
-  root.classList.add("modal-open");
+  root.querySelectorAll("[data-edit-cancel]").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      const row = btn.closest(".history-row");
+      const input = row.querySelector(".edit-input");
+      input.value = input.defaultValue;
+      row.classList.remove("editing");
+    });
+  });
 
-  const close = () => {
-    root.classList.remove("modal-open");
-    root.innerHTML = "";
-  };
-  root.querySelectorAll("[data-modal-close]").forEach((el) => el.addEventListener("click", close));
-
-  const input = root.querySelector("#edit-tap-input");
-  setTimeout(() => input.focus(), 0);
-
-  root.querySelector("#edit-tap-save").addEventListener("click", async () => {
-    if (!input.value) { toast("Orario non valido"); return; }
-    const newTs = new Date(input.value).getTime();
-    if (!Number.isFinite(newTs)) { toast("Orario non valido"); return; }
-    await db.updateTapTimestamp(tapId, newTs);
-    close();
-    toast("Orario aggiornato");
-    notifyDataChanged();
+  root.querySelectorAll("[data-edit-save]").forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      const row = btn.closest(".history-row");
+      const input = row.querySelector(".edit-input");
+      const id = Number(btn.dataset.editSave);
+      if (!input.value) { toast("Orario non valido"); return; }
+      const newTs = new Date(input.value).getTime();
+      if (!Number.isFinite(newTs)) { toast("Orario non valido"); return; }
+      await db.updateTapTimestamp(id, newTs);
+      toast("Orario aggiornato");
+      notifyDataChanged();
+    });
   });
 }
 
@@ -148,24 +137,35 @@ function sectionHtml(group, isToday, isYesterday) {
 
   const rows = group.items.map((t) => {
     const time = formatTime(t.timestamp);
+    const editValue = toLocalInputValue(t.timestamp);
     return `
-      <div class="history-row ${badgeColor}">
-        <div class="flex items-center gap-3 min-w-0">
-          <div class="badge">
-            <span class="material-symbols-outlined" style="font-size:22px">${muted ? "history" : "add_circle"}</span>
+      <div class="history-row ${badgeColor}" data-row-tap="${t.id}">
+        <div class="history-row-view">
+          <div class="flex items-center gap-3 min-w-0">
+            <div class="badge">
+              <span class="material-symbols-outlined" style="font-size:22px">${muted ? "history" : "add_circle"}</span>
+            </div>
+            <div class="min-w-0">
+              <div class="time">${time}</div>
+              <div class="label">Incremento</div>
+            </div>
           </div>
-          <div class="min-w-0">
-            <div class="time">${time}</div>
-            <div class="label">Incremento</div>
+          <div class="row-actions">
+            <button type="button" class="edit" data-edit-tap="${t.id}" aria-label="Modifica orario tap">
+              <span class="material-symbols-outlined">edit</span>
+            </button>
+            <button type="button" class="del" data-delete-tap="${t.id}" aria-label="Elimina tap">
+              <span class="material-symbols-outlined">delete</span>
+            </button>
           </div>
         </div>
-        <div class="row-actions">
-          <button type="button" class="edit" data-edit-tap="${t.id}" data-edit-ts="${t.timestamp}" aria-label="Modifica orario tap">
-            <span class="material-symbols-outlined">edit</span>
-          </button>
-          <button type="button" class="del" data-delete-tap="${t.id}" aria-label="Elimina tap">
-            <span class="material-symbols-outlined">delete</span>
-          </button>
+        <div class="history-row-edit">
+          <label class="edit-label">Modifica data e ora</label>
+          <input type="datetime-local" class="edit-input" value="${editValue}" step="60">
+          <div class="edit-actions">
+            <button type="button" class="btn-cancel" data-edit-cancel>Annulla</button>
+            <button type="button" class="btn-save" data-edit-save="${t.id}">Salva</button>
+          </div>
         </div>
       </div>`;
   }).join("");
