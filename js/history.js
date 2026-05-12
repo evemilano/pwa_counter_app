@@ -77,16 +77,26 @@ export async function renderHistory(root) {
         if (r !== row) r.classList.remove("editing");
       });
       row.classList.add("editing");
-      const input = row.querySelector(".edit-input");
-      setTimeout(() => input.focus(), 0);
+      const timeInput = row.querySelector(".edit-time");
+      setTimeout(() => timeInput?.focus(), 0);
+    });
+  });
+
+  root.querySelectorAll(".edit-time").forEach((input) => {
+    input.addEventListener("input", () => {
+      const raw = input.value.replace(/[^\d]/g, "").slice(0, 4);
+      if (raw.length <= 2) input.value = raw;
+      else input.value = raw.slice(0, 2) + ":" + raw.slice(2);
     });
   });
 
   root.querySelectorAll("[data-edit-cancel]").forEach((btn) => {
     btn.addEventListener("click", () => {
       const row = btn.closest(".history-row");
-      const input = row.querySelector(".edit-input");
-      input.value = input.defaultValue;
+      const dateInput = row.querySelector(".edit-date");
+      const timeInput = row.querySelector(".edit-time");
+      if (dateInput) dateInput.value = dateInput.defaultValue;
+      if (timeInput) timeInput.value = timeInput.defaultValue;
       row.classList.remove("editing");
     });
   });
@@ -94,11 +104,11 @@ export async function renderHistory(root) {
   root.querySelectorAll("[data-edit-save]").forEach((btn) => {
     btn.addEventListener("click", async () => {
       const row = btn.closest(".history-row");
-      const input = row.querySelector(".edit-input");
+      const dateInput = row.querySelector(".edit-date");
+      const timeInput = row.querySelector(".edit-time");
       const id = Number(btn.dataset.editSave);
-      if (!input.value) { toast("Orario non valido"); return; }
-      const newTs = new Date(input.value).getTime();
-      if (!Number.isFinite(newTs)) { toast("Orario non valido"); return; }
+      const newTs = parseEditedDateTime(dateInput?.value, timeInput?.value);
+      if (newTs == null) { toast("Orario non valido (HH:MM in 24h)"); return; }
       await db.updateTapTimestamp(id, newTs);
       toast("Orario aggiornato");
       notifyDataChanged();
@@ -106,10 +116,23 @@ export async function renderHistory(root) {
   });
 }
 
-function toLocalInputValue(ts) {
+function parseEditedDateTime(dateStr, timeStr) {
+  if (!dateStr || !timeStr) return null;
+  const dm = /^(\d{4})-(\d{2})-(\d{2})$/.exec(dateStr);
+  const tm = /^([01]\d|2[0-3]):([0-5]\d)$/.exec(timeStr);
+  if (!dm || !tm) return null;
+  const d = new Date(Number(dm[1]), Number(dm[2]) - 1, Number(dm[3]), Number(tm[1]), Number(tm[2]), 0, 0);
+  const ts = d.getTime();
+  return Number.isFinite(ts) ? ts : null;
+}
+
+function toEditValues(ts) {
   const d = new Date(ts);
   const pad = (n) => String(n).padStart(2, "0");
-  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+  return {
+    date: `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`,
+    time: `${pad(d.getHours())}:${pad(d.getMinutes())}`,
+  };
 }
 
 function groupByDay(taps) {
@@ -137,7 +160,7 @@ function sectionHtml(group, isToday, isYesterday) {
 
   const rows = group.items.map((t) => {
     const time = formatTime(t.timestamp);
-    const editValue = toLocalInputValue(t.timestamp);
+    const edit = toEditValues(t.timestamp);
     return `
       <div class="history-row ${badgeColor}" data-row-tap="${t.id}">
         <div class="history-row-view">
@@ -160,8 +183,13 @@ function sectionHtml(group, isToday, isYesterday) {
           </div>
         </div>
         <div class="history-row-edit">
-          <label class="edit-label">Modifica data e ora</label>
-          <input type="datetime-local" class="edit-input" value="${editValue}" step="60">
+          <label class="edit-label">Modifica data e ora (formato 24h)</label>
+          <div class="edit-fields">
+            <input type="date" class="edit-date" value="${edit.date}" aria-label="Data">
+            <input type="text" class="edit-time" value="${edit.time}" inputmode="numeric"
+              maxlength="5" placeholder="HH:MM" pattern="^([01]\\d|2[0-3]):[0-5]\\d$"
+              aria-label="Ora in formato 24h">
+          </div>
           <div class="edit-actions">
             <button type="button" class="btn-cancel" data-edit-cancel>Annulla</button>
             <button type="button" class="btn-save" data-edit-save="${t.id}">Salva</button>

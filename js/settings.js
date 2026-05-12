@@ -23,13 +23,25 @@ export async function renderSettings(root) {
           Aggiungi
         </button>
       </div>
+      <button type="button" id="btn-merge-dupes"
+        class="mt-3 flex items-center gap-2 bg-surface-container-lowest text-on-surface border border-outline-variant px-4 py-2.5 rounded-xl font-semibold active:scale-95 transition-transform">
+        <span class="material-symbols-outlined" style="font-size:20px">merge</span>
+        Trova e unisci duplicati
+      </button>
     </section>
 
     <section class="mt-8">
       <h3 class="text-label-caps uppercase tracking-widest text-on-surface-variant mb-2">Backup</h3>
       <p class="text-on-surface-variant text-sm mb-3">
-        Esporta tutti i dati in un file JSON e importalo su un altro telefono.
+        Esporta tutti i dati in un file JSON e importalo su un altro device per un ripristino completo.
       </p>
+      <label class="flex items-start gap-2 text-sm text-on-surface mb-3">
+        <input type="checkbox" id="export-include-creds" class="mt-1">
+        <span>
+          Includi credenziali di sync (endpoint + token)
+          <span class="block text-xs text-on-surface-variant">Il file conterrà il token in chiaro: trattalo come una password.</span>
+        </span>
+      </label>
       <div class="flex flex-wrap gap-2">
         <button type="button" id="btn-export"
           class="flex items-center gap-2 bg-surface-container-lowest text-on-surface border border-outline-variant px-4 py-2.5 rounded-xl font-semibold active:scale-95 transition-transform">
@@ -54,7 +66,7 @@ export async function renderSettings(root) {
       <div class="space-y-2">
         <label class="block">
           <span class="text-xs font-semibold text-on-surface-variant">Endpoint URL</span>
-          <input type="url" id="sync-endpoint" placeholder="https://www.evemilano.com/cntr/api/sync.php" autocomplete="off"
+          <input type="text" id="sync-endpoint" placeholder="api/sync.php" autocomplete="off"
             class="mt-1 w-full rounded-xl border border-outline-variant px-3 py-2 bg-surface-container-lowest text-on-surface focus:outline-none focus:border-primary">
         </label>
         <label class="block">
@@ -101,8 +113,12 @@ export async function renderSettings(root) {
   root.querySelector("#new-name").addEventListener("keydown", (e) => {
     if (e.key === "Enter") doAdd(root);
   });
+  root.querySelector("#btn-merge-dupes").addEventListener("click", () => doMergeDuplicates());
 
-  root.querySelector("#btn-export").addEventListener("click", doExport);
+  const includeCredsBox = root.querySelector("#export-include-creds");
+  includeCredsBox.checked = !!sync.getConfig();
+
+  root.querySelector("#btn-export").addEventListener("click", () => doExport(includeCredsBox.checked));
   root.querySelector("#btn-import").addEventListener("click", () => {
     root.querySelector("#import-file").click();
   });
@@ -115,9 +131,14 @@ export async function renderSettings(root) {
   root.querySelector("#btn-wipe").addEventListener("click", async () => {
     if (!confirm("Cancellare TUTTI i contatori e i tap?\nNon si può tornare indietro.")) return;
     if (!confirm("Sei sicuro? Conferma una seconda volta.")) return;
+    const now = Date.now();
     await db.db.transaction("rw", db.db.counters, db.db.taps, async () => {
-      await db.db.taps.clear();
-      await db.db.counters.clear();
+      await db.db.taps.toCollection().modify((t) => {
+        if (!t.deletedAt) { t.deletedAt = now; t.updatedAt = now; }
+      });
+      await db.db.counters.toCollection().modify((c) => {
+        if (!c.deletedAt) { c.deletedAt = now; c.updatedAt = now; }
+      });
     });
     db.setLastCounterId(null);
     toast("Tutti i dati cancellati");
@@ -206,8 +227,10 @@ function setupSyncSection(root) {
   const statusEl = root.querySelector("#sync-status");
   const cfg = sync.getConfig();
   if (cfg) {
-    endpointInput.value = cfg.endpoint || "";
+    endpointInput.value = cfg.endpoint || "api/sync.php";
     tokenInput.value = cfg.token || "";
+  } else {
+    endpointInput.value = "api/sync.php";
   }
   renderSyncStatus(statusEl);
 
@@ -289,8 +312,8 @@ async function doAdd(root) {
   notifyDataChanged();
 }
 
-async function doExport() {
-  const data = await db.exportAll();
+async function doExport(includeSyncCredentials) {
+  const data = await db.exportAll({ includeSyncCredentials });
   const blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json" });
   const url = URL.createObjectURL(blob);
   const a = document.createElement("a");
@@ -301,7 +324,10 @@ async function doExport() {
   a.click();
   document.body.removeChild(a);
   setTimeout(() => URL.revokeObjectURL(url), 1000);
-  toast(`Esportati: ${data.counters.length} contatori, ${data.taps.length} tap`);
+  const aliveCounters = data.counters.filter((c) => !c.deletedAt).length;
+  const aliveTaps = data.taps.filter((t) => !t.deletedAt).length;
+  const credNote = data.settings?.sync ? " + sync" : "";
+  toast(`Esportati: ${aliveCounters} contatori, ${aliveTaps} tap${credNote}`);
 }
 
 async function doImport(file) {
@@ -317,16 +343,143 @@ async function doImport(file) {
   if (!mode) return;
   try {
     const r = await db.importAll(data, mode);
-    toast(`Importati: ${r.countersAdded} contatori, ${r.tapsAdded} tap (saltati ${r.tapsSkipped})`, 3500);
+    const parts = [];
+    if (mode === "replace") {
+      parts.push(`${r.countersAdded} contatori`, `${r.tapsAdded} tap`);
+      if (r.tapsSkipped) parts.push(`saltati ${r.tapsSkipped}`);
+      if (data.settings?.sync) parts.push("sync ripristinata");
+    } else {
+      parts.push(`+${r.countersAdded} nuovi`, `~${r.countersUpdated || 0} aggiornati`);
+      parts.push(`+${r.tapsAdded} tap`, `~${r.tapsUpdated || 0} mod.`);
+      if (r.tapsSkipped) parts.push(`saltati ${r.tapsSkipped}`);
+    }
+    toast(`Import: ${parts.join(", ")}`, 4000);
     notifyDataChanged();
+    if (mode === "replace" && sync.getConfig()) {
+      // Replace deve "vincere" sul server: force-push diretto, niente pull-then-push
+      // che farebbe rientrare i dati che il file non aveva.
+      sync.syncForcePush().catch(() => {});
+    }
   } catch (e) {
     alert("Errore import: " + e.message);
   }
 }
 
+async function findDuplicateGroups() {
+  const counters = await db.listCounters();
+  const byName = new Map();
+  for (const c of counters) {
+    const k = (c.name || "").trim().toLowerCase();
+    if (!k) continue;
+    if (!byName.has(k)) byName.set(k, []);
+    byName.get(k).push(c);
+  }
+  const groups = [];
+  for (const [k, arr] of byName) {
+    if (arr.length < 2) continue;
+    const withCounts = await Promise.all(arr.map(async (c) => ({
+      c,
+      taps: await db.countTapsInRange(c.id, 0, Number.MAX_SAFE_INTEGER),
+    })));
+    withCounts.sort((a, b) => {
+      if (b.taps !== a.taps) return b.taps - a.taps;
+      return (a.c.createdAt || 0) - (b.c.createdAt || 0);
+    });
+    const canonical = withCounts[0].c;
+    const duplicates = withCounts.slice(1).map((x) => x.c);
+    groups.push({ key: k, canonical, duplicates, totalTaps: withCounts.reduce((s, x) => s + x.taps, 0) });
+  }
+  return groups;
+}
+
+async function doMergeDuplicates() {
+  // Bug B fix: prima sincronizza per portare in locale TUTTI gli uid del server.
+  // Senza questo, un Unisci basato sullo stato locale lascia su server uid
+  // sconosciuti che la prossima sync ri-importerebbe come nuovi.
+  if (sync.getConfig()) {
+    toast("Sincronizzo prima di cercare duplicati…", 1500);
+    try {
+      await sync.syncNow({ silent: true });
+    } catch (e) {
+      if (!confirm("Sync fallita prima della ricerca duplicati. Procedere comunque sui soli dati locali?\nRiga errore: " + (e.message || e))) {
+        return;
+      }
+    }
+  }
+  const groups = await findDuplicateGroups();
+  if (groups.length === 0) {
+    toast("Nessun duplicato trovato");
+    return;
+  }
+  const confirmed = await confirmMergeGroups(groups);
+  if (!confirmed) return;
+  let mergedTotal = 0, tapsMovedTotal = 0;
+  for (const g of groups) {
+    const r = await db.mergeCounters(g.canonical.id, g.duplicates.map((d) => d.id));
+    mergedTotal += r.mergedCount;
+    tapsMovedTotal += r.tapsMoved;
+  }
+  notifyDataChanged();
+  // Bug B fix: force-push dello stato post-merge per evitare che un pull
+  // intermedio re-importi gli uid duplicati come alive (LWW dipende dai
+  // timestamp, ma forcePush li sostituisce e basta).
+  if (sync.getConfig()) {
+    try {
+      await sync.syncForcePush();
+      toast(`Uniti ${mergedTotal} duplicati, ${tapsMovedTotal} tap riassegnati, sync ok`, 4000);
+    } catch (e) {
+      toast(`Uniti localmente ${mergedTotal}, ma sync fallita: ${e.message || e}`, 5000);
+    }
+  } else {
+    toast(`Uniti ${mergedTotal} duplicati, ${tapsMovedTotal} tap riassegnati`, 3500);
+  }
+}
+
+function confirmMergeGroups(groups) {
+  return new Promise((resolve) => {
+    const overlay = document.createElement("div");
+    overlay.className = "fixed inset-0 z-[70] flex items-center justify-center bg-black/50 p-4";
+    const groupsHtml = groups.map((g) => {
+      const dupNames = g.duplicates.map((d) => `<code class="text-xs">${escapeHtml(d.name)}</code>`).join(", ");
+      return `
+        <div class="bg-surface-container-low rounded-lg p-3 text-sm">
+          <div class="text-on-surface"><b>${escapeHtml(g.canonical.name)}</b> ← ${g.duplicates.length} duplicat${g.duplicates.length > 1 ? "i" : "o"}</div>
+          <div class="text-on-surface-variant text-xs mt-1">Canonico scelto: il record con più tap (${g.totalTaps} totali nel gruppo).</div>
+        </div>`;
+    }).join("");
+    overlay.innerHTML = `
+      <div class="bg-surface-container-lowest rounded-2xl p-5 max-w-md w-full shadow-2xl max-h-[80vh] overflow-y-auto">
+        <h3 class="font-display font-bold text-xl mb-1">Unisci duplicati</h3>
+        <p class="text-on-surface-variant text-sm mb-3">
+          Trovati ${groups.length} grupp${groups.length > 1 ? "i" : "o"} con nomi identici.
+          I tap dei duplicati verranno spostati nel canonico, i duplicati saranno cancellati (soft-delete propagato via sync).
+        </p>
+        <div class="space-y-2 mb-4">${groupsHtml}</div>
+        <div class="flex gap-2">
+          <button type="button" data-act="confirm"
+            class="flex-1 bg-primary text-on-primary p-3 rounded-xl font-semibold active:scale-95 transition-transform">
+            Unisci tutto
+          </button>
+          <button type="button" data-act="cancel"
+            class="flex-1 bg-surface-container text-on-surface p-3 rounded-xl font-semibold active:scale-95 transition-transform">
+            Annulla
+          </button>
+        </div>
+      </div>`;
+    overlay.addEventListener("click", (e) => {
+      const act = e.target?.closest?.("[data-act]")?.dataset?.act;
+      if (!act) return;
+      document.body.removeChild(overlay);
+      resolve(act === "confirm");
+    });
+    document.body.appendChild(overlay);
+  });
+}
+
 function pickImportMode(data) {
-  const cCount = data.counters?.length ?? "?";
-  const tCount = data.taps?.length ?? "?";
+  const cCount = data.counters?.filter?.((c) => !c.deletedAt).length ?? data.counters?.length ?? "?";
+  const tCount = data.taps?.filter?.((t) => !t.deletedAt).length ?? data.taps?.length ?? "?";
+  const hasSettings = !!data.settings?.sync;
   return new Promise((resolve) => {
     const overlay = document.createElement("div");
     overlay.className = "fixed inset-0 z-[70] flex items-center justify-center bg-black/50 p-4";
@@ -334,18 +487,18 @@ function pickImportMode(data) {
       <div class="bg-surface-container-lowest rounded-2xl p-5 max-w-sm w-full shadow-2xl">
         <h3 class="font-display font-bold text-xl mb-1">Modalità import</h3>
         <p class="text-on-surface-variant text-sm mb-4">
-          File con <b>${cCount}</b> contatori e <b>${tCount}</b> tap.
+          File con <b>${cCount}</b> contatori e <b>${tCount}</b> tap${hasSettings ? " + sync" : ""}.
         </p>
         <div class="space-y-2">
           <button type="button" data-mode="merge"
             class="w-full text-left bg-primary text-on-primary p-3 rounded-xl font-semibold active:scale-95 transition-transform">
             <div>Unisci ai dati esistenti</div>
-            <div class="text-xs font-normal opacity-85">Aggiunge solo i tap nuovi (dedup automatica)</div>
+            <div class="text-xs font-normal opacity-85">Per ogni record vince la versione più recente (last-write-wins).${hasSettings ? " I settings del file vengono ignorati." : ""}</div>
           </button>
           <button type="button" data-mode="replace"
             class="w-full text-left bg-error-container text-error border border-error/30 p-3 rounded-xl font-semibold active:scale-95 transition-transform">
             <div>Sostituisci tutto</div>
-            <div class="text-xs font-normal opacity-85">Cancella tutto e ricarica dal file</div>
+            <div class="text-xs font-normal opacity-85">Cancella tutto e ricarica dal file${hasSettings ? " (anche sync)" : ""}</div>
           </button>
           <button type="button" data-mode=""
             class="w-full bg-surface-container text-on-surface p-3 rounded-xl font-semibold active:scale-95 transition-transform">

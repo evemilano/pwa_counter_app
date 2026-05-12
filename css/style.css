@@ -195,8 +195,13 @@ body { min-height: 100dvh; }
   text-transform: uppercase;
   color: #5a4a4a;
 }
-.history-row .edit-input {
-  width: 100%;
+.history-row .edit-fields {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.history-row .edit-date,
+.history-row .edit-time {
   border: 1px solid #d8c4c4;
   border-radius: 10px;
   padding: 10px 12px;
@@ -205,7 +210,16 @@ body { min-height: 100dvh; }
   font-size: 16px;
   font-family: inherit;
 }
-.history-row .edit-input:focus { outline: none; border-color: #e85454; }
+.history-row .edit-date { flex: 1 1 160px; min-width: 0; }
+.history-row .edit-time {
+  width: 88px;
+  text-align: center;
+  letter-spacing: 0.05em;
+  font-variant-numeric: tabular-nums;
+}
+.history-row .edit-date:focus,
+.history-row .edit-time:focus { outline: none; border-color: #e85454; }
+.history-row .edit-time:invalid { border-color: #c93838; background: #fde2e2; }
 .history-row .edit-actions {
   display: flex;
   justify-content: flex-end;

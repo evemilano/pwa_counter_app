@@ -75,6 +75,12 @@ export async function pushRemote(data, expectedVersion) {
   return { conflict: false, version: json.version, updatedAt: json.updatedAt };
 }
 
+function importChanged(r) {
+  if (!r) return false;
+  return ((r.countersAdded || 0) + (r.countersUpdated || 0) + (r.countersAligned || 0) +
+          (r.countersCollapsed || 0) + (r.tapsAdded || 0) + (r.tapsUpdated || 0)) > 0;
+}
+
 export async function syncNow({ silent = false } = {}) {
   if (!isConfigured()) {
     if (!silent) setState({ lastError: "Non configurato" });
@@ -83,6 +89,10 @@ export async function syncNow({ silent = false } = {}) {
   if (inFlight) return inFlight;
   if (!silent) setState({ lastError: null, syncing: true });
 
+  // Primo sync di questo device: abilita dedup-by-name per allineare counter creati
+  // localmente prima della configurazione del sync allo stato remoto.
+  const isFirstSync = (getState().lastSyncAt || 0) === 0;
+
   inFlight = (async () => {
     let mergedRemote = false;
     try {
@@ -90,19 +100,15 @@ export async function syncNow({ silent = false } = {}) {
       let expectedVersion = remote.version || 0;
 
       if (remote.data && Array.isArray(remote.data.counters) && Array.isArray(remote.data.taps)) {
-        const before = await db.exportAll();
         const remotePayload = { app: "contaapp", schemaVersion: db.SCHEMA_VERSION, ...remote.data };
-        await db.importAll(remotePayload, "merge");
-        const after = await db.exportAll();
-        if (before.counters.length !== after.counters.length || before.taps.length !== after.taps.length) {
-          mergedRemote = true;
-        }
+        const r = await db.importAll(remotePayload, "merge", { dedupByName: isFirstSync });
+        if (importChanged(r)) mergedRemote = true;
       }
 
       let attempt = 0;
       while (attempt < MAX_RETRIES) {
         const local = await db.exportAll();
-        const payload = { counters: local.counters, taps: local.taps };
+        const payload = { counters: local.counters, taps: local.taps, schemaVersion: db.SCHEMA_VERSION };
         const result = await pushRemote(payload, expectedVersion);
         if (!result.conflict) {
           setState({ lastSyncAt: Date.now(), lastError: null, syncing: false });
@@ -115,17 +121,51 @@ export async function syncNow({ silent = false } = {}) {
         const cur = result.current || {};
         expectedVersion = cur.version || 0;
         if (cur.data && Array.isArray(cur.data.counters) && Array.isArray(cur.data.taps)) {
-          const before = await db.exportAll();
           const remotePayload = { app: "contaapp", schemaVersion: db.SCHEMA_VERSION, ...cur.data };
-          await db.importAll(remotePayload, "merge");
-          const after = await db.exportAll();
-          if (before.counters.length !== after.counters.length || before.taps.length !== after.taps.length) {
-            mergedRemote = true;
-          }
+          // Dedup-by-name solo nel pull iniziale; nei retry su 409 il flag non si applica
+          // perché stiamo già lavorando con lo stato remoto autoritativo.
+          const r = await db.importAll(remotePayload, "merge");
+          if (importChanged(r)) mergedRemote = true;
         }
         attempt++;
       }
       throw new Error("Troppi conflitti, riprova");
+    } catch (err) {
+      setState({ lastError: err.message || String(err), syncing: false });
+      throw err;
+    } finally {
+      inFlight = null;
+    }
+  })();
+
+  return inFlight;
+}
+
+export async function syncForcePush() {
+  if (!isConfigured()) return { skipped: true };
+  // Attende un eventuale syncNow in corso per evitare race sul versionamento
+  while (inFlight) {
+    try { await inFlight; } catch {}
+  }
+  setState({ lastError: null, syncing: true });
+
+  inFlight = (async () => {
+    try {
+      const remote = await fetchRemote();
+      let expectedVersion = remote.version || 0;
+      let attempt = 0;
+      while (attempt < MAX_RETRIES) {
+        const local = await db.exportAll();
+        const payload = { counters: local.counters, taps: local.taps, schemaVersion: db.SCHEMA_VERSION };
+        const result = await pushRemote(payload, expectedVersion);
+        if (!result.conflict) {
+          setState({ lastSyncAt: Date.now(), lastError: null, syncing: false });
+          return { ok: true, version: result.version };
+        }
+        expectedVersion = result.current?.version || 0;
+        attempt++;
+      }
+      throw new Error("Force push fallito dopo troppi conflitti");
     } catch (err) {
       setState({ lastError: err.message || String(err), syncing: false });
       throw err;
