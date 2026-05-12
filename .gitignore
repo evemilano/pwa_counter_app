@@ -1,0 +1,17 @@
+# Claude Code
+.claude/
+Claude.md
+
+# Backup esportati dall'app
+contaapp-*.json
+
+# OS / editor
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
+.vscode/
+.idea/
+
+# Logs
+*.log

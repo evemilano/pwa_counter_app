@@ -1,0 +1,208 @@
+/* Custom additions on top of Tailwind */
+
+html, body { -webkit-tap-highlight-color: transparent; overscroll-behavior-y: none; }
+body { min-height: 100dvh; }
+
+.material-symbols-outlined {
+  font-variation-settings: "FILL" 0, "wght" 400, "GRAD" 0, "opsz" 24;
+  vertical-align: middle;
+}
+
+.hidden { display: none !important; }
+
+/* Bottom-nav active state */
+#bottomnav .navbtn { color: #5a4a4a99; }
+#bottomnav .navbtn.active {
+  color: #c93838;
+  background: #fde2e2;
+}
+
+/* Toast transitions */
+#toast.show { opacity: 1; transform: translate(-50%, 0); }
+#toast { opacity: 0; transform: translate(-50%, 12px); pointer-events: none; }
+#toast.show { pointer-events: auto; }
+
+/* Counter big circular button */
+.btn-counter {
+  width: 200px; height: 200px;
+  border-radius: 9999px;
+  background: linear-gradient(180deg, #f06868, #d84848);
+  color: white;
+  border: 0;
+  box-shadow: 0 20px 50px -10px rgba(232, 84, 84, 0.45),
+              0 8px 20px -5px rgba(232, 84, 84, 0.3),
+              inset 0 -3px 0 rgba(0,0,0,0.08);
+  cursor: pointer;
+  transition: transform 80ms ease, box-shadow 200ms ease;
+  display: flex; align-items: center; justify-content: center;
+}
+.btn-counter:active {
+  transform: scale(0.95);
+  box-shadow: 0 10px 25px -10px rgba(232, 84, 84, 0.4),
+              inset 0 2px 0 rgba(0,0,0,0.1);
+}
+.btn-counter .material-symbols-outlined {
+  font-variation-settings: "FILL" 1, "wght" 600, "GRAD" 0, "opsz" 48;
+  font-size: 80px;
+}
+
+/* Period pill tabs */
+.period-pill {
+  display: inline-flex;
+  background: #f4eaea;
+  border-radius: 9999px;
+  padding: 4px;
+  gap: 2px;
+}
+.period-pill button {
+  padding: 8px 18px;
+  border-radius: 9999px;
+  color: #5a4a4a;
+  font-weight: 500;
+  font-size: 14px;
+  transition: background 150ms, color 150ms;
+}
+.period-pill button.active {
+  background: white;
+  color: #c93838;
+  font-weight: 700;
+  box-shadow: 0 1px 4px rgba(0,0,0,0.08);
+}
+
+/* Drawer transition */
+#drawer:not(.hidden) aside { animation: slideIn 220ms cubic-bezier(0.2, 0.8, 0.2, 1); }
+@keyframes slideIn { from { transform: translateX(-100%); } to { transform: translateX(0); } }
+
+/* Drawer counter row */
+.drawer-counter {
+  display: flex; align-items: center; gap: 12px;
+  padding: 12px;
+  border-radius: 12px;
+  cursor: pointer;
+  transition: background 120ms;
+}
+.drawer-counter:hover, .drawer-counter:active { background: #f4eaea; }
+.drawer-counter.active { background: #fde2e2; }
+.drawer-counter .dot {
+  width: 12px; height: 12px; border-radius: 9999px; flex: 0 0 auto;
+}
+.drawer-counter .meta { flex: 1; min-width: 0; }
+.drawer-counter .name { font-weight: 600; color: #1a1c1c; }
+.drawer-counter .sub { font-size: 12px; color: #5a4a4a; }
+
+/* Empty state illustration card */
+.empty-card {
+  background: linear-gradient(135deg, rgba(253, 226, 226, 0.7), transparent);
+  border-radius: 16px;
+  padding: 32px 16px;
+  text-align: center;
+}
+
+/* History row */
+.history-row {
+  background: white;
+  border: 1px solid rgba(216, 196, 196, 0.4);
+  border-radius: 12px;
+  padding: 12px 14px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+.history-row.muted { background: #f4eaea; opacity: 0.85; }
+.history-row .badge {
+  width: 40px; height: 40px;
+  border-radius: 9999px;
+  background: #fde2e2;
+  color: #c93838;
+  display: flex; align-items: center; justify-content: center;
+  flex: 0 0 auto;
+}
+.history-row.muted .badge { background: #e3d4d4; color: #8a7575; }
+.history-row .time { font-weight: 700; font-size: 17px; color: #1a1c1c; }
+.history-row .label { font-size: 13px; color: #5a4a4a; }
+.history-row .del {
+  color: #8a7575;
+  padding: 8px;
+  border-radius: 8px;
+  transition: color 120ms;
+}
+.history-row .del:active { color: #8a1818; background: #ffd5d2; }
+
+/* Stat card */
+.stat-card {
+  background: white;
+  border: 1px solid rgba(216, 196, 196, 0.4);
+  border-radius: 16px;
+  padding: 16px;
+}
+.stat-card.accent {
+  background: linear-gradient(135deg, #e85454, #c93838);
+  color: white;
+  border: 0;
+  overflow: hidden;
+  position: relative;
+}
+.stat-card.accent .deco {
+  position: absolute;
+  right: -20px;
+  top: -10px;
+  opacity: 0.18;
+  font-size: 120px;
+}
+.stat-card .label {
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: #5a4a4a;
+  margin-bottom: 4px;
+}
+.stat-card.accent .label { color: rgba(255,255,255,0.85); }
+.stat-card .value {
+  font-family: Montserrat, system-ui, sans-serif;
+  font-weight: 800;
+  font-size: 28px;
+  line-height: 1.1;
+  letter-spacing: -0.02em;
+}
+
+/* Period nav arrows */
+.period-nav {
+  display: flex; align-items: center; justify-content: space-between;
+  margin: 16px 0 12px;
+}
+.period-nav button {
+  width: 36px; height: 36px;
+  border-radius: 9999px;
+  background: white;
+  border: 1px solid rgba(216, 196, 196, 0.5);
+  color: #5a4a4a;
+  display: flex; align-items: center; justify-content: center;
+  transition: background 120ms;
+}
+.period-nav button:disabled { opacity: 0.35; }
+.period-nav button:not(:disabled):active { background: #f4eaea; }
+.period-nav .range { font-weight: 600; color: #1a1c1c; font-size: 15px; }
+
+/* Pulse animation on +1 */
+@keyframes pop {
+  0% { transform: scale(1); }
+  40% { transform: scale(0.92); }
+  100% { transform: scale(1); }
+}
+.btn-counter.pop { animation: pop 220ms cubic-bezier(0.2, 0.8, 0.2, 1); }
+
+/* Floating undo */
+.undo-floating {
+  display: inline-flex; align-items: center; gap: 6px;
+  background: white;
+  border: 1px solid rgba(216, 196, 196, 0.5);
+  color: #5a4a4a;
+  padding: 8px 16px;
+  border-radius: 9999px;
+  font-size: 14px;
+  font-weight: 500;
+}
+.undo-floating:active { background: #f4eaea; }
+.undo-floating .material-symbols-outlined { font-size: 18px; }

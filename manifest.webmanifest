@@ -1,0 +1,28 @@
+{
+  "name": "Counter",
+  "short_name": "Counter",
+  "description": "Multi-counter PWA per contare quante volte fai una cosa al giorno. Statistiche, cronologia, offline.",
+  "lang": "it",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "portrait",
+  "theme_color": "#e85454",
+  "background_color": "#fffafa",
+  "icons": [
+    { "src": "icons/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "icons/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
+    { "src": "icons/icon-maskable.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ],
+  "shortcuts": [
+    {
+      "name": "+1 ultimo contatore",
+      "short_name": "+1",
+      "description": "Incrementa l'ultimo contatore usato",
+      "url": "./?action=quick-inc",
+      "icons": [
+        { "src": "icons/shortcut-plus.png", "sizes": "96x96", "type": "image/png" }
+      ]
+    }
+  ]
+}
