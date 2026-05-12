@@ -144,6 +144,32 @@ function escapeHtml(s) {
 
 export { escapeHtml };
 
+let deferredInstallPrompt = null;
+const installBtn = document.getElementById("btn-install");
+
+window.addEventListener("beforeinstallprompt", (e) => {
+  e.preventDefault();
+  deferredInstallPrompt = e;
+  installBtn.classList.remove("hidden");
+});
+
+installBtn.addEventListener("click", async () => {
+  if (!deferredInstallPrompt) return;
+  installBtn.disabled = true;
+  deferredInstallPrompt.prompt();
+  const choice = await deferredInstallPrompt.userChoice;
+  if (choice.outcome === "accepted") toast("Installazione avviata");
+  deferredInstallPrompt = null;
+  installBtn.classList.add("hidden");
+  installBtn.disabled = false;
+});
+
+window.addEventListener("appinstalled", () => {
+  deferredInstallPrompt = null;
+  installBtn.classList.add("hidden");
+  toast("App installata");
+});
+
 async function main() {
   await handleShortcut();
   show("dashboard");

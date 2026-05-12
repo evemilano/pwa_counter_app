@@ -68,6 +68,10 @@ export async function deleteTap(tapId) {
   await db.taps.delete(tapId);
 }
 
+export async function updateTapTimestamp(tapId, newTimestamp) {
+  await db.taps.update(tapId, { timestamp: Number(newTimestamp) });
+}
+
 export async function removeLatestTap(counterId) {
   const latest = await db.taps
     .where("counterId").equals(counterId)

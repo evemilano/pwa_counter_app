@@ -9,7 +9,7 @@ stays on your device.
 > Live demo: **https://www.evemilano.com/cntr/**
 > Repository: **https://github.com/evemilano/pwa_counter_app**
 
-![Counter PWA dashboard with large tap-to-increment button](shot-dashboard.png)
+![Counter PWA dashboard with large tap-to-increment button](screen/shot-dashboard.png)
 
 ---
 
@@ -72,7 +72,7 @@ Typical use cases:
 
 | Dashboard | Statistics | Over-target alert |
 |---|---|---|
-| ![Counter dashboard with multi-counter list and current day total](shot-dashboard.png) | ![Counter statistics page with ApexCharts daily and weekly chart](shot-stats.png) | ![Counter dashboard in red over-target state warning the daily goal has been exceeded](shot-red-dashboard.png) |
+| ![Counter dashboard with multi-counter list and current day total](screen/shot-dashboard.png) | ![Counter statistics page with ApexCharts daily and weekly chart](screen/shot-stats.png) | ![Counter dashboard in red over-target state warning the daily goal has been exceeded](screen/shot-red-dashboard.png) |
 
 ---
 

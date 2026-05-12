@@ -69,6 +69,58 @@ export async function renderHistory(root) {
       notifyDataChanged();
     });
   });
+
+  root.querySelectorAll("[data-edit-tap]").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      const id = Number(btn.dataset.editTap);
+      const ts = Number(btn.dataset.editTs);
+      openEditTapModal(id, ts);
+    });
+  });
+}
+
+function openEditTapModal(tapId, currentTs) {
+  const root = document.getElementById("modal-root");
+  const value = toLocalInputValue(currentTs);
+  root.innerHTML = `
+    <div class="modal-backdrop" data-modal-close></div>
+    <div class="modal-card" role="dialog" aria-modal="true" aria-label="Modifica orario">
+      <h3 class="font-display font-bold text-lg text-on-surface mb-1">Modifica orario</h3>
+      <p class="text-on-surface-variant text-sm mb-4">Cambia la data e l'ora di questo tap.</p>
+      <input type="datetime-local" id="edit-tap-input" value="${value}" step="60"
+        class="w-full rounded-xl border border-outline-variant px-3 py-2 bg-surface-container-low text-on-surface focus:outline-none focus:border-primary">
+      <div class="flex justify-end gap-2 mt-4">
+        <button type="button" class="px-4 py-2 rounded-xl text-on-surface-variant font-semibold active:scale-95 transition-transform" data-modal-close>Annulla</button>
+        <button type="button" id="edit-tap-save" class="bg-primary text-on-primary px-4 py-2 rounded-xl font-semibold active:scale-95 transition-transform">Salva</button>
+      </div>
+    </div>
+  `;
+  root.classList.add("modal-open");
+
+  const close = () => {
+    root.classList.remove("modal-open");
+    root.innerHTML = "";
+  };
+  root.querySelectorAll("[data-modal-close]").forEach((el) => el.addEventListener("click", close));
+
+  const input = root.querySelector("#edit-tap-input");
+  setTimeout(() => input.focus(), 0);
+
+  root.querySelector("#edit-tap-save").addEventListener("click", async () => {
+    if (!input.value) { toast("Orario non valido"); return; }
+    const newTs = new Date(input.value).getTime();
+    if (!Number.isFinite(newTs)) { toast("Orario non valido"); return; }
+    await db.updateTapTimestamp(tapId, newTs);
+    close();
+    toast("Orario aggiornato");
+    notifyDataChanged();
+  });
+}
+
+function toLocalInputValue(ts) {
+  const d = new Date(ts);
+  const pad = (n) => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
 }
 
 function groupByDay(taps) {
@@ -107,9 +159,14 @@ function sectionHtml(group, isToday, isYesterday) {
             <div class="label">Incremento</div>
           </div>
         </div>
-        <button type="button" class="del" data-delete-tap="${t.id}" aria-label="Elimina tap">
-          <span class="material-symbols-outlined">delete</span>
-        </button>
+        <div class="row-actions">
+          <button type="button" class="edit" data-edit-tap="${t.id}" data-edit-ts="${t.timestamp}" aria-label="Modifica orario tap">
+            <span class="material-symbols-outlined">edit</span>
+          </button>
+          <button type="button" class="del" data-delete-tap="${t.id}" aria-label="Elimina tap">
+            <span class="material-symbols-outlined">delete</span>
+          </button>
+        </div>
       </div>`;
   }).join("");
 
