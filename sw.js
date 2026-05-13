@@ -1,4 +1,4 @@
-const CACHE = "counter-v19";
+const CACHE = "counter-v24";
 const ASSETS = [
   "./",
   "./index.html",
@@ -8,6 +8,7 @@ const ASSETS = [
   "./js/db.js",
   "./js/dashboard.js",
   "./js/stats.js",
+  "./js/stats-math.js",
   "./js/history.js",
   "./js/settings.js",
   "./js/sync.js",

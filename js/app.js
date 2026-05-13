@@ -5,6 +5,24 @@ import { renderHistory } from "./history.js";
 import { renderSettings } from "./settings.js";
 import * as sync from "./sync.js";
 
+export const APP_VERSION = "v24";
+
+// Traccia i giorni in cui l'app è stata aperta. Serve a Statistiche per
+// distinguere giorni "zero sigarette" da giorni in cui l'utente è sparito.
+function recordAppOpen() {
+  try {
+    const key = "contaapp:appOpens";
+    const today = db.startOfDay();
+    const raw = localStorage.getItem(key);
+    const arr = raw ? JSON.parse(raw) : [];
+    if (!arr.includes(today)) {
+      arr.push(today);
+      while (arr.length > 365) arr.shift();
+      localStorage.setItem(key, JSON.stringify(arr));
+    }
+  } catch {}
+}
+
 const VIEWS = {
   dashboard: { el: document.getElementById("view-dashboard"), render: renderDashboard, title: "Counter" },
   stats:     { el: document.getElementById("view-stats"),     render: renderStats,     title: "Statistiche" },
@@ -99,12 +117,24 @@ document.getElementById("drawer-add").addEventListener("click", async () => {
   const input = document.getElementById("drawer-new-name");
   const v = input.value.trim();
   if (!v) { input.focus(); return; }
-  const c = await db.addCounter(v);
-  db.setLastCounterId(c.id);
-  input.value = "";
-  await renderDrawerList();
-  toast(`Creato: ${c.name}`);
-  notifyDataChanged();
+  try {
+    const c = await db.addCounter(v);
+    db.setLastCounterId(c.id);
+    input.value = "";
+    await renderDrawerList();
+    toast(`Creato: ${c.name}`);
+    notifyDataChanged();
+  } catch (e) {
+    if (e.code === "DUPLICATE_NAME" && e.existing) {
+      db.setLastCounterId(e.existing.id);
+      input.value = "";
+      await renderDrawerList();
+      toast(`Esiste già: ${e.existing.name}`);
+      notifyDataChanged();
+    } else {
+      toast(e.message || "Errore");
+    }
+  }
 });
 document.getElementById("drawer-new-name").addEventListener("keydown", (e) => {
   if (e.key === "Enter") document.getElementById("drawer-add").click();
@@ -171,14 +201,39 @@ window.addEventListener("appinstalled", () => {
   toast("App installata");
 });
 
+async function renderVersionFooter() {
+  const el = document.getElementById("app-version");
+  if (!el) return;
+  let swCache = null;
+  if ("caches" in self) {
+    try {
+      const keys = await caches.keys();
+      swCache = keys.find((k) => k.startsWith("counter-")) || null;
+    } catch {}
+  }
+  const swTag = swCache ? swCache.replace("counter-", "") : "—";
+  const mismatch = swCache && swCache !== `counter-${APP_VERSION}`;
+  el.textContent = mismatch
+    ? `app ${APP_VERSION} · sw ${swTag} (chiudi e riapri per aggiornare)`
+    : `app ${APP_VERSION}`;
+}
+
 async function main() {
+  recordAppOpen();
+  // Avvia subito sync.init (registra listener + lancia syncNow in background).
+  // NON aspettiamo: se la rete è lenta o il server lento, l'UI deve comunque
+  // partire — la race "DB vuoto durante pull" è mitigata da Fix 3 (post-import
+  // collapse) e Fix 6 (dedup server-side).
+  sync.init();
+
   await handleShortcut();
   show("dashboard");
-  sync.init();
+  renderVersionFooter();
 
   if ("serviceWorker" in navigator) {
     try {
       await navigator.serviceWorker.register("./sw.js");
+      renderVersionFooter();
     } catch (err) {
       console.warn("SW registration failed:", err);
     }

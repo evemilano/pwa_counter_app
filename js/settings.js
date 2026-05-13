@@ -94,6 +94,17 @@ export async function renderSettings(root) {
     </section>
 
     <section class="mt-8">
+      <h3 class="text-label-caps uppercase tracking-widest text-on-surface-variant mb-2">Preferenze statistiche</h3>
+      <label class="flex items-start gap-2 text-sm text-on-surface">
+        <input type="checkbox" id="show-health" class="mt-1">
+        <span>
+          Mostra impatto salute (tempo di vita guadagnato)
+          <span class="block text-xs text-on-surface-variant">Stima ~11 min per sigaretta evitata (fonte CDC, solo indicativa).</span>
+        </span>
+      </label>
+    </section>
+
+    <section class="mt-8">
       <h3 class="text-label-caps uppercase tracking-widest text-error mb-2">Zona pericolosa</h3>
       <button type="button" id="btn-wipe"
         class="flex items-center gap-2 bg-error-container text-error border border-error/30 px-4 py-2.5 rounded-xl font-semibold active:scale-95 transition-transform">
@@ -127,6 +138,13 @@ export async function renderSettings(root) {
   });
 
   setupSyncSection(root);
+
+  const showHealthEl = root.querySelector("#show-health");
+  showHealthEl.checked = localStorage.getItem("contaapp:showHealth") !== "false";
+  showHealthEl.addEventListener("change", () => {
+    localStorage.setItem("contaapp:showHealth", showHealthEl.checked ? "true" : "false");
+    notifyDataChanged();
+  });
 
   root.querySelector("#btn-wipe").addEventListener("click", async () => {
     if (!confirm("Cancellare TUTTI i contatori e i tap?\nNon si può tornare indietro.")) return;
@@ -173,6 +191,22 @@ function renderCounterList(root, counters, activeId) {
         <input type="number" min="0" max="9999" class="w-20 bg-surface-container-low border border-outline-variant rounded-lg px-2 py-1 text-on-surface text-sm focus:outline-none focus:border-primary"
           value="${Number(c.dailyTarget) || 0}" data-target="${c.id}">
       </div>
+      <div class="flex items-center gap-2 mt-2 pl-6 flex-wrap">
+        <span class="material-symbols-outlined text-on-surface-variant" style="font-size:18px">euro</span>
+        <label class="text-sm text-on-surface-variant">Prezzo sig.:</label>
+        <input type="number" min="0" max="99" step="0.01" placeholder="0,30"
+          class="w-20 bg-surface-container-low border border-outline-variant rounded-lg px-2 py-1 text-on-surface text-sm focus:outline-none focus:border-primary"
+          value="${Number(c.pricePerCig) || 0}" data-price="${c.id}">
+        <span class="text-xs text-on-surface-variant">€</span>
+      </div>
+      <div class="flex items-center gap-2 mt-2 pl-6 flex-wrap">
+        <span class="material-symbols-outlined text-on-surface-variant" style="font-size:18px">trending_down</span>
+        <label class="text-sm text-on-surface-variant">Fumavi prima:</label>
+        <input type="number" min="0" max="99" placeholder="auto"
+          class="w-20 bg-surface-container-low border border-outline-variant rounded-lg px-2 py-1 text-on-surface text-sm focus:outline-none focus:border-primary"
+          value="${Number(c.baselineOverride) || 0}" data-baseline="${c.id}">
+        <span class="text-xs text-on-surface-variant">sig/giorno</span>
+      </div>
     `;
     list.appendChild(row);
   }
@@ -200,6 +234,24 @@ function renderCounterList(root, counters, activeId) {
     input.addEventListener("change", async () => {
       await db.setDailyTarget(id, input.value);
       toast("Target aggiornato");
+      notifyDataChanged();
+    });
+  });
+
+  list.querySelectorAll("[data-price]").forEach((input) => {
+    const id = Number(input.dataset.price);
+    input.addEventListener("change", async () => {
+      await db.setPricePerCig(id, input.value);
+      toast("Prezzo aggiornato");
+      notifyDataChanged();
+    });
+  });
+
+  list.querySelectorAll("[data-baseline]").forEach((input) => {
+    const id = Number(input.dataset.baseline);
+    input.addEventListener("change", async () => {
+      await db.setBaselineOverride(id, input.value);
+      toast(Number(input.value) > 0 ? "Baseline impostata" : "Baseline automatica");
       notifyDataChanged();
     });
   });
@@ -305,11 +357,22 @@ async function doAdd(root) {
   const input = root.querySelector("#new-name");
   const v = input.value.trim();
   if (!v) { input.focus(); return; }
-  const c = await db.addCounter(v);
-  if (!db.getLastCounterId()) db.setLastCounterId(c.id);
-  input.value = "";
-  toast(`Creato: ${c.name}`);
-  notifyDataChanged();
+  try {
+    const c = await db.addCounter(v);
+    if (!db.getLastCounterId()) db.setLastCounterId(c.id);
+    input.value = "";
+    toast(`Creato: ${c.name}`);
+    notifyDataChanged();
+  } catch (e) {
+    if (e.code === "DUPLICATE_NAME" && e.existing) {
+      db.setLastCounterId(e.existing.id);
+      input.value = "";
+      toast(`Esiste già: ${e.existing.name}`);
+      notifyDataChanged();
+    } else {
+      toast(e.message || "Errore");
+    }
+  }
 }
 
 async function doExport(includeSyncCredentials) {

@@ -1,6 +1,6 @@
 import Dexie from "https://esm.sh/dexie@4.0.10";
 
-export const SCHEMA_VERSION = 3;
+export const SCHEMA_VERSION = 4;
 const PALETTE = ["#e85454", "#f59e0b", "#10b981", "#06b6d4", "#6366f1", "#a855f7", "#ec4899", "#84cc16"];
 
 export const db = new Dexie("contaapp");
@@ -31,6 +31,15 @@ db.version(3).stores({
     if (t.deletedAt === undefined) t.deletedAt = null;
   });
 });
+db.version(4).stores({
+  counters: "++id, uid, name, createdAt, updatedAt",
+  taps: "++id, uid, counterId, timestamp, updatedAt, [counterId+timestamp]",
+}).upgrade(async (tx) => {
+  await tx.table("counters").toCollection().modify((c) => {
+    if (c.pricePerCig === undefined) c.pricePerCig = 0;
+    if (c.baselineOverride === undefined) c.baselineOverride = 0;
+  });
+});
 
 function newUid() {
   if (crypto && typeof crypto.randomUUID === "function") return crypto.randomUUID();
@@ -57,12 +66,23 @@ export async function getCounter(id) {
 
 export async function addCounter(name, color, dailyTarget = 0) {
   const aliveCounters = await listCounters();
+  const trimmed = name.trim();
+  const key = trimmed.toLowerCase();
+  const existing = aliveCounters.find((c) => (c.name || "").trim().toLowerCase() === key);
+  if (existing) {
+    const err = new Error(`Esiste già un contatore "${existing.name}"`);
+    err.code = "DUPLICATE_NAME";
+    err.existing = existing;
+    throw err;
+  }
   const now = Date.now();
   const c = {
     uid: newUid(),
-    name: name.trim(),
+    name: trimmed,
     color: color || pickColor(aliveCounters.length),
     dailyTarget: Number(dailyTarget) || 0,
+    pricePerCig: 0,
+    baselineOverride: 0,
     createdAt: now,
     updatedAt: now,
     deletedAt: null,
@@ -71,16 +91,42 @@ export async function addCounter(name, color, dailyTarget = 0) {
   return c;
 }
 
+// Bug-fix: edit on a tombstoned counter would bump updatedAt without clearing
+// deletedAt, ma il fatto che updatedAt > deletedAt remoto basta a resuscitarlo
+// al prossimo LWW pull. Per ogni edit, se il record è tombstone esci subito e
+// preserva deletedAt nell'update; mai toccare implicitamente deletedAt.
+async function isTombstoned(id) {
+  const c = await db.counters.get(id);
+  return !!(c && c.deletedAt);
+}
+
 export async function updateCounter(id, patch) {
-  await db.counters.update(id, { ...patch, updatedAt: Date.now() });
+  if (await isTombstoned(id)) return;
+  const safePatch = { ...patch };
+  delete safePatch.deletedAt;
+  await db.counters.update(id, { ...safePatch, updatedAt: Date.now() });
 }
 
 export async function renameCounter(id, newName) {
+  if (await isTombstoned(id)) return;
   await db.counters.update(id, { name: newName.trim(), updatedAt: Date.now() });
 }
 
 export async function setDailyTarget(id, value) {
+  if (await isTombstoned(id)) return;
   await db.counters.update(id, { dailyTarget: Number(value) || 0, updatedAt: Date.now() });
+}
+
+export async function setPricePerCig(id, value) {
+  if (await isTombstoned(id)) return;
+  const num = Math.max(0, Number(value) || 0);
+  await db.counters.update(id, { pricePerCig: num, updatedAt: Date.now() });
+}
+
+export async function setBaselineOverride(id, value) {
+  if (await isTombstoned(id)) return;
+  const num = Math.max(0, Number(value) || 0);
+  await db.counters.update(id, { baselineOverride: num, updatedAt: Date.now() });
 }
 
 export async function deleteCounter(id) {
@@ -241,6 +287,8 @@ export async function exportAll({ includeSyncCredentials = true } = {}) {
     name: c.name,
     color: c.color,
     dailyTarget: Number(c.dailyTarget) || 0,
+    pricePerCig: Number(c.pricePerCig) || 0,
+    baselineOverride: Number(c.baselineOverride) || 0,
     createdAt: c.createdAt,
     updatedAt: c.updatedAt || c.createdAt,
     deletedAt: c.deletedAt ?? null,
@@ -278,6 +326,8 @@ function normalizeCounter(c) {
     name: String(c.name ?? "").trim() || "Senza nome",
     color: c.color || pickColor(0),
     dailyTarget: Number(c.dailyTarget) || 0,
+    pricePerCig: Number(c.pricePerCig) || 0,
+    baselineOverride: Number(c.baselineOverride) || 0,
     createdAt: Number(c.createdAt) || Date.now(),
     updatedAt: Number(c.updatedAt) || Number(c.createdAt) || Date.now(),
     deletedAt: c.deletedAt ? Number(c.deletedAt) : null,
@@ -434,7 +484,7 @@ export async function importAll(data, mode = "merge", options = {}) {
           if (candidates.length === 0) aliveByName.delete(k);
           const remoteNewer = norm.updatedAt > (aligned.updatedAt || 0);
           const patch = remoteNewer
-            ? { uid: norm.uid, name: norm.name, color: norm.color, dailyTarget: norm.dailyTarget, updatedAt: norm.updatedAt, deletedAt: norm.deletedAt }
+            ? { uid: norm.uid, name: norm.name, color: norm.color, dailyTarget: norm.dailyTarget, pricePerCig: norm.pricePerCig, baselineOverride: norm.baselineOverride, updatedAt: norm.updatedAt, deletedAt: norm.deletedAt }
             : { uid: norm.uid };
           await db.counters.update(aligned.id, patch);
           const merged = { ...aligned, ...patch };
@@ -455,6 +505,8 @@ export async function importAll(data, mode = "merge", options = {}) {
           name: norm.name,
           color: norm.color,
           dailyTarget: norm.dailyTarget,
+          pricePerCig: norm.pricePerCig,
+          baselineOverride: norm.baselineOverride,
           updatedAt: norm.updatedAt,
           deletedAt: norm.deletedAt,
         });
@@ -497,7 +549,68 @@ export async function importAll(data, mode = "merge", options = {}) {
       }
     }
 
-    return { mode, countersAdded, countersUpdated, countersAligned, countersCollapsed, tapsAdded, tapsUpdated, tapsSkipped };
+    // Bug-fix (Fix 3): post-import collapse di locali alive "orfani" (uid non nel
+    // payload remoto) su canonical alive con stesso nome. Questa è la difesa
+    // che ferma il loop di duplicazione su singolo device: se prima del pull
+    // l'utente aveva creato localmente "Fiodena" con uid X, e il server ha
+    // "Fiodena" con uid Y, dopo l'import del remoto ci sono X e Y entrambi alive.
+    // Spostiamo i tap di X su Y, tombstoniamo X con updatedAt futuristico così
+    // l'LWW non lo resuscita.
+    const remoteUidSet = new Set(data.counters.map((c) => c.uid));
+    const allCountersAfter = await db.counters.toArray();
+    const aliveAfterByName = new Map();
+    for (const c of allCountersAfter) {
+      if (c.deletedAt) continue;
+      const k = (c.name || "").trim().toLowerCase();
+      if (!k) continue;
+      if (!aliveAfterByName.has(k)) aliveAfterByName.set(k, []);
+      aliveAfterByName.get(k).push(c);
+    }
+    let countersOrphansCollapsed = 0, tapsReassigned = 0;
+    const allTapsAfter = await db.taps.toArray();
+    const maxUpdatedAfter = Math.max(
+      Date.now(),
+      ...allCountersAfter.map((c) => Number(c.updatedAt) || 0),
+      ...allTapsAfter.map((t) => Number(t.updatedAt) || 0),
+    );
+    let collapseTs = maxUpdatedAfter + 1;
+    for (const [k, group] of aliveAfterByName) {
+      if (group.length < 2) continue;
+      // canonical: preferisci un uid presente nel payload remoto (autoritativo),
+      // tiebreaker createdAt minore + uid lessicale.
+      group.sort((a, b) => {
+        const ar = remoteUidSet.has(a.uid) ? 0 : 1;
+        const br = remoteUidSet.has(b.uid) ? 0 : 1;
+        if (ar !== br) return ar - br;
+        return (Number(a.createdAt) || 0) - (Number(b.createdAt) || 0) || String(a.uid).localeCompare(String(b.uid));
+      });
+      const canonical = group[0];
+      for (let i = 1; i < group.length; i++) {
+        const dup = group[i];
+        const dupTaps = await db.taps.where("counterId").equals(dup.id).toArray();
+        for (const t of dupTaps) {
+          if (!t.deletedAt) {
+            await db.taps.update(t.id, { counterId: canonical.id, updatedAt: collapseTs });
+            tapsReassigned++;
+          }
+        }
+        await db.counters.update(dup.id, { deletedAt: collapseTs, updatedAt: collapseTs });
+        countersOrphansCollapsed++;
+        collapseTs++;
+        console.debug(`[importAll] orphan collapse "${dup.name}" uid ${dup.uid} → canonical ${canonical.uid}`);
+      }
+    }
+
+    return {
+      mode,
+      countersAdded,
+      countersUpdated,
+      countersAligned,
+      countersCollapsed: countersCollapsed + countersOrphansCollapsed,
+      tapsAdded,
+      tapsUpdated: tapsUpdated + tapsReassigned,
+      tapsSkipped,
+    };
   });
 }
 

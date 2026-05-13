@@ -112,6 +112,16 @@ if ($method === 'PUT' || $method === 'POST') {
         exit;
     }
 
+    // Bug-fix (Fix 6): dedup server-side per garantire l'invariante "max 1 alive
+    // per nome". Se un client buggato pusha N counter "Fiodena" alive distinti
+    // (caso reale osservato in produzione il 2026-05-13), collassiamo a 1 qui:
+    // canonical = createdAt minore + uid lessicale, tutti gli altri ricevono
+    // deletedAt = now con updatedAt futuristico così l'LWW dei client non li
+    // resuscita al prossimo pull.
+    $data = is_array($payload['data']) ? $payload['data'] : [];
+    $data = dedupCountersByName($data);
+    $payload['data'] = $data;
+
     $new = [
         'data' => $payload['data'],
         'updatedAt' => (int)round(microtime(true) * 1000),
@@ -120,6 +130,71 @@ if ($method === 'PUT' || $method === 'POST') {
     writeState($dataFile, $DATA_PREFIX, $new);
     echo json_encode(['ok' => true, 'version' => $new['version'], 'updatedAt' => $new['updatedAt']]);
     exit;
+}
+
+function dedupCountersByName(array $data): array {
+    if (!isset($data['counters']) || !is_array($data['counters'])) return $data;
+    $counters = $data['counters'];
+
+    // Calcola un timestamp "futuristico" che batte qualunque updatedAt nel payload,
+    // così i tombstone aggiunti qui sopravvivono al LWW di client che hanno
+    // versioni più recenti del counter.
+    $maxTs = (int)round(microtime(true) * 1000);
+    foreach ($counters as $c) {
+        if (isset($c['updatedAt'])) $maxTs = max($maxTs, (int)$c['updatedAt']);
+        if (isset($c['deletedAt']) && $c['deletedAt']) $maxTs = max($maxTs, (int)$c['deletedAt']);
+    }
+    if (isset($data['taps']) && is_array($data['taps'])) {
+        foreach ($data['taps'] as $t) {
+            if (isset($t['updatedAt'])) $maxTs = max($maxTs, (int)$t['updatedAt']);
+        }
+    }
+    $now = $maxTs + 1;
+
+    // Raggruppa per name normalizzato, solo alive.
+    $groups = [];
+    foreach ($counters as $i => $c) {
+        if (!empty($c['deletedAt'])) continue;
+        $k = strtolower(trim((string)($c['name'] ?? '')));
+        if ($k === '') continue;
+        if (!isset($groups[$k])) $groups[$k] = [];
+        $groups[$k][] = $i;
+    }
+
+    foreach ($groups as $k => $indexes) {
+        if (count($indexes) < 2) continue;
+        // Ordina: createdAt minore → canonical. Tiebreaker uid lessicale.
+        usort($indexes, function ($a, $b) use ($counters) {
+            $ca = (int)($counters[$a]['createdAt'] ?? 0);
+            $cb = (int)($counters[$b]['createdAt'] ?? 0);
+            if ($ca !== $cb) return $ca - $cb;
+            return strcmp((string)($counters[$a]['uid'] ?? ''), (string)($counters[$b]['uid'] ?? ''));
+        });
+        $canonicalIdx = $indexes[0];
+        $canonicalUid = $counters[$canonicalIdx]['uid'] ?? null;
+        $tsCursor = $now;
+        for ($j = 1; $j < count($indexes); $j++) {
+            $idx = $indexes[$j];
+            $dupUid = $counters[$idx]['uid'] ?? null;
+            $counters[$idx]['deletedAt'] = $tsCursor;
+            $counters[$idx]['updatedAt'] = $tsCursor;
+            $tsCursor++;
+            error_log("[sync.php dedup] collapsed alive duplicate name='" . $k . "' uid=" . $dupUid . " → canonical=" . $canonicalUid);
+            // Riassegna i tap del duplicato al canonical (per counterUid).
+            if (isset($data['taps']) && is_array($data['taps']) && $canonicalUid && $dupUid) {
+                foreach ($data['taps'] as $ti => $t) {
+                    if (($t['counterUid'] ?? null) === $dupUid && empty($t['deletedAt'])) {
+                        $data['taps'][$ti]['counterUid'] = $canonicalUid;
+                        $data['taps'][$ti]['updatedAt'] = $tsCursor;
+                        $tsCursor++;
+                    }
+                }
+            }
+        }
+    }
+
+    $data['counters'] = $counters;
+    return $data;
 }
 
 http_response_code(405);

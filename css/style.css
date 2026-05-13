@@ -315,3 +315,9 @@ body { min-height: 100dvh; }
 }
 .undo-floating:active { background: #f4eaea; }
 .undo-floating .material-symbols-outlined { font-size: 18px; }
+
+/* Delta badges (segno invertito per anti-fumo) */
+.delta-good { color: #10b981; }
+.delta-bad { color: #8a1818; }
+.delta-flat { color: #5a4a4a; }
+.stat-card .sub { font-size: 12px; color: #5a4a4a; margin-top: 4px; }

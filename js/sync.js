@@ -89,10 +89,6 @@ export async function syncNow({ silent = false } = {}) {
   if (inFlight) return inFlight;
   if (!silent) setState({ lastError: null, syncing: true });
 
-  // Primo sync di questo device: abilita dedup-by-name per allineare counter creati
-  // localmente prima della configurazione del sync allo stato remoto.
-  const isFirstSync = (getState().lastSyncAt || 0) === 0;
-
   inFlight = (async () => {
     let mergedRemote = false;
     try {
@@ -101,7 +97,9 @@ export async function syncNow({ silent = false } = {}) {
 
       if (remote.data && Array.isArray(remote.data.counters) && Array.isArray(remote.data.taps)) {
         const remotePayload = { app: "contaapp", schemaVersion: db.SCHEMA_VERSION, ...remote.data };
-        const r = await db.importAll(remotePayload, "merge", { dedupByName: isFirstSync });
+        // dedupByName attivo ad ogni sync: il post-import collapse di importAll
+        // è l'unica difesa contro counter alive locali con uid sconosciuto al server.
+        const r = await db.importAll(remotePayload, "merge", { dedupByName: true });
         if (importChanged(r)) mergedRemote = true;
       }
 
@@ -122,9 +120,10 @@ export async function syncNow({ silent = false } = {}) {
         expectedVersion = cur.version || 0;
         if (cur.data && Array.isArray(cur.data.counters) && Array.isArray(cur.data.taps)) {
           const remotePayload = { app: "contaapp", schemaVersion: db.SCHEMA_VERSION, ...cur.data };
-          // Dedup-by-name solo nel pull iniziale; nei retry su 409 il flag non si applica
-          // perché stiamo già lavorando con lo stato remoto autoritativo.
-          const r = await db.importAll(remotePayload, "merge");
+          // Anche nei retry su 409 abilitiamo dedupByName: il remoto è autoritativo
+          // per uid ma non per nomi, e senza dedup i duplicati per nome (locali o
+          // dentro il payload remoto stesso) sopravviverebbero.
+          const r = await db.importAll(remotePayload, "merge", { dedupByName: true });
           if (importChanged(r)) mergedRemote = true;
         }
         attempt++;
