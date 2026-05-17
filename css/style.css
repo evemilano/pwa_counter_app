@@ -238,6 +238,28 @@ body { min-height: 100dvh; }
 .history-row .btn-save { color: white; background: #e85454; }
 .history-row .btn-save:active { background: #c93838; transform: scale(0.97); }
 
+/* Collapsible older-day sections */
+.history-section-old { margin-top: 24px; }
+.history-section-old > summary {
+  list-style: none;
+  cursor: pointer;
+  user-select: none;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 12px;
+  padding: 6px 4px;
+  border-radius: 10px;
+  -webkit-tap-highlight-color: transparent;
+}
+.history-section-old > summary::-webkit-details-marker { display: none; }
+.history-section-old > summary:active { background: #f4eaea; }
+.history-section-old > summary .chevron {
+  transition: transform 0.15s ease;
+  color: #8a7575;
+}
+.history-section-old[open] > summary .chevron { transform: rotate(90deg); }
+
 /* Stat card */
 .stat-card {
   background: white;

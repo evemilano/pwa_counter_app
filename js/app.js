@@ -5,7 +5,7 @@ import { renderHistory } from "./history.js";
 import { renderSettings } from "./settings.js";
 import * as sync from "./sync.js";
 
-export const APP_VERSION = "v25";
+export const APP_VERSION = "v26";
 
 // Traccia i giorni in cui l'app è stata aperta. Serve a Statistiche per
 // distinguere giorni "zero sigarette" da giorni in cui l'utente è sparito.

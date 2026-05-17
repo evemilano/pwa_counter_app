@@ -305,13 +305,11 @@ export function compareSums(currSum, prevSum) {
 
 /* ── PERIODI ───────────────────────────────────────────────── */
 
-// Slicing utility: dato l'intero series e una pillola periodo, ritorna {from, to, slice}.
-// IMPORTANTE: lo slice copre l'INTERO periodo richiesto (es. 30 giorni per "30d"),
-// anche se il primo tap è recente. I giorni prima del primo tap risultano missing.
-// Questo è importante per l'asse temporale del grafico: "30g" deve sempre mostrare
-// uno span di 30 giorni.
+// Dato l'intero series e una pillola periodo, ritorna i bounds {from, to}.
+// Lo slice denso lo costruisce il chiamante: stats.js usa una series estesa
+// (con buffer per le MA), quindi farlo qui sarebbe spreco.
 export function slicePeriod(series, period, todayDay) {
-  if (!series.length) return { from: todayDay, to: todayDay, slice: [] };
+  if (!series.length) return { from: todayDay, to: todayDay };
   const last = series[series.length - 1].day;
   let from;
   if (period === "7d") from = last - 6 * DAY_MS;
@@ -321,16 +319,7 @@ export function slicePeriod(series, period, todayDay) {
     const d = new Date(last); d.setMonth(0, 1); d.setHours(0, 0, 0, 0);
     from = d.getTime();
   } else from = series[0].day; // "all"
-
-  // Costruisci uno slice denso dal `from` al `last`, riempiendo con `missing:true`
-  // i giorni che non sono nella series (prima del primo tap).
-  const byDay = new Map(series.map((r) => [r.day, r]));
-  const slice = [];
-  for (let d = from; d <= last; d += DAY_MS) {
-    if (byDay.has(d)) slice.push(byDay.get(d));
-    else slice.push({ day: d, n: 0, missing: true });
-  }
-  return { from, to: last, slice };
+  return { from, to: last };
 }
 
 /* ── FORMAT ────────────────────────────────────────────────── */

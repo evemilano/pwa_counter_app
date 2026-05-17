@@ -1,4 +1,4 @@
-const CACHE = "counter-v25";
+const CACHE = "counter-v32";
 const ASSETS = [
   "./",
   "./index.html",

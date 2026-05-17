@@ -157,6 +157,9 @@ function sectionHtml(group, isToday, isYesterday) {
 
   const muted = gStart < yStart;
   const badgeColor = muted ? "muted" : "";
+  // Oggi e Ieri restano espansi; tutto il resto va in <details> collassato
+  // per ridurre lo scroll quando la cronologia diventa lunga.
+  const collapsible = gStart < yStart;
 
   const rows = group.items.map((t) => {
     const time = formatTime(t.timestamp);
@@ -198,11 +201,28 @@ function sectionHtml(group, isToday, isYesterday) {
       </div>`;
   }).join("");
 
+  const badgeHtml = `<span class="text-label-caps ${muted ? "bg-surface-container text-on-surface-variant" : "bg-primary-fixed text-primary"} px-3 py-1 rounded-full">${group.items.length} tap</span>`;
+
+  if (collapsible) {
+    return `
+      <details class="history-section-old">
+        <summary>
+          <h3 class="text-label-caps uppercase tracking-widest text-on-surface-variant flex items-center gap-1.5">
+            <span class="material-symbols-outlined chevron" style="font-size:18px">chevron_right</span>
+            ${title}
+          </h3>
+          ${badgeHtml}
+        </summary>
+        <div class="space-y-2">${rows}</div>
+      </details>
+    `;
+  }
+
   return `
     <section class="mt-6">
       <div class="flex items-center justify-between mb-3">
         <h3 class="text-label-caps uppercase tracking-widest text-on-surface-variant">${title}</h3>
-        <span class="text-label-caps ${muted ? "bg-surface-container text-on-surface-variant" : "bg-primary-fixed text-primary"} px-3 py-1 rounded-full">${group.items.length} tap</span>
+        ${badgeHtml}
       </div>
       <div class="space-y-2">${rows}</div>
     </section>

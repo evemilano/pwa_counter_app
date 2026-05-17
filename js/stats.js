@@ -4,11 +4,11 @@ import ApexCharts from "https://esm.sh/apexcharts@3.54.1";
 import * as sm from "./stats-math.js";
 
 const PERIODS = [
-  { id: "7d",   label: "7g" },
-  { id: "30d",  label: "30g" },
-  { id: "90d",  label: "90g" },
-  { id: "year", label: "Anno" },
-  { id: "all",  label: "Sempre" },
+  { id: "7d",   label: "7g",     long: "7 giorni" },
+  { id: "30d",  label: "30g",    long: "30 giorni" },
+  { id: "90d",  label: "90g",    long: "90 giorni" },
+  { id: "year", label: "Anno",   long: "anno corrente" },
+  { id: "all",  label: "Sempre", long: "da sempre" },
 ];
 
 const state = {
@@ -140,7 +140,7 @@ function buildSkeleton(counter) {
       </div>
       <div class="stat-card">
         <span class="material-symbols-outlined text-primary" style="font-size:20px">local_fire_department</span>
-        <div class="label mt-1">Streak migliore</div>
+        <div class="label mt-1">Streak migliore <span class="text-on-surface-variant/70 font-normal">· da sempre</span></div>
         <div class="value" id="kpi-streak">—</div>
         <div class="sub" id="kpi-streak-sub"></div>
       </div>
@@ -149,7 +149,7 @@ function buildSkeleton(counter) {
     <!-- TREND chart -->
     <section class="bg-surface-container-lowest rounded-2xl p-4 border border-outline-variant/30 mt-4">
       <div class="text-label-caps uppercase tracking-widest text-on-surface-variant mb-2">
-        Andamento sigarette/giorno
+        Andamento/giorno
       </div>
       <div id="chart-trend" class="-mx-2" style="min-height:240px"></div>
       <div class="text-xs text-on-surface-variant mt-2 flex flex-wrap gap-3 items-center">
@@ -182,7 +182,7 @@ function buildSkeleton(counter) {
 
     <!-- CUMULATIVE SAVED -->
     <section class="bg-surface-container-lowest rounded-2xl p-4 border border-outline-variant/30 mt-4" id="saved-section">
-      <div class="text-label-caps uppercase tracking-widest text-on-surface-variant mb-2">Sigarette evitate (cumulato)</div>
+      <div class="text-label-caps uppercase tracking-widest text-on-surface-variant mb-2">Sigarette evitate · da sempre</div>
       <div id="chart-saved" class="-mx-2" style="min-height:200px"></div>
       <div class="text-xs text-on-surface-variant mt-2" id="saved-note"></div>
     </section>
@@ -191,15 +191,15 @@ function buildSkeleton(counter) {
     <div class="grid grid-cols-1 gap-3 mt-4" id="conv-section">
       <div class="stat-card accent" id="conv-money-card">
         <span class="material-symbols-outlined deco">savings</span>
-        <div class="label text-white/85">Risparmio cumulativo</div>
+        <div class="label text-white/85"><span id="conv-money-title">Risparmio</span></div>
         <div class="value text-white"><span id="conv-money-saved">—</span></div>
         <div class="sub text-white/80" id="conv-money-period">—</div>
       </div>
       <div class="stat-card" id="conv-life-card">
         <span class="material-symbols-outlined" style="font-size:20px;color:#10b981">favorite</span>
-        <div class="label mt-1">Tempo di vita guadagnato</div>
+        <div class="label mt-1"><span id="conv-life-title">Tempo di vita guadagnato</span></div>
         <div class="value" id="conv-life-value">—</div>
-        <div class="sub">~11 min per sigaretta evitata (stima CDC)</div>
+        <div class="sub" id="conv-life-sub">~11 min per sigaretta evitata (stima CDC)</div>
       </div>
     </div>
 
@@ -280,18 +280,27 @@ async function refresh(root, counter) {
     heroDir = pct < -3 ? "down" : pct > 3 ? "up" : "flat";
   }
 
-  // Trend
-  const trend = sm.computeTrend(series, { windowDays: 30, baseline: baseline.value || 0 });
+  // Trend sul periodo selezionato dalla pillola.
+  const trend = sm.computeTrend(slice, { windowDays: slice.length, baseline: baseline.value || 0 });
 
   // Streak
   const streak = sm.computeStreaks(series, target);
   const onTarget = sm.daysOnTarget(slice, target);
 
-  // Confronto periodo vs precedente
+  // Confronto periodo vs precedente. Per "all" non esiste un "precedente",
+  // quindi la comparazione viene saltata. Per gli altri periodi la finestra
+  // equivalente prima di `periodFrom` viene costruita direttamente dai tap
+  // (così funziona anche per 90d/year, che andavano oltre il buffer).
   const sliceLen = slice.length;
-  const prevSlice = series.slice(Math.max(0, series.length - sliceLen * 2), series.length - sliceLen);
-  const prevTotal = prevSlice.reduce((a, r) => a + r.n, 0);
-  const cmp = sm.compareSums(totalPeriod, prevTotal);
+  let prevTotal = 0;
+  let cmp = { direction: "flat", deltaPct: null, deltaAbs: 0 };
+  if (state.period !== "all") {
+    const prevTo = periodFrom - DAY;
+    const prevFrom = prevTo - (sliceLen - 1) * DAY;
+    const prevSlice = sm.buildDailySeries(taps, prevFrom, prevTo, appOpens);
+    prevTotal = prevSlice.reduce((a, r) => a + r.n, 0);
+    cmp = sm.compareSums(totalPeriod, prevTotal);
+  }
 
   // Hourly / weekday — sui tap del periodo
   const sliceTaps = taps.filter((t) => {
@@ -329,19 +338,26 @@ async function refresh(root, counter) {
   }
 
   const slopeEl = root.querySelector("#hero-slope");
+  const periodLabel = PERIODS.find((p) => p.id === state.period)?.label || "";
   if (trend && Math.abs(trend.slope) > 0.05) {
     const perWeek = Math.round(trend.slope * 7 * 10) / 10;
     const word = perWeek < 0 ? "calando" : "aumentando";
-    slopeEl.textContent = `Trend: ${word} di ~${Math.abs(perWeek)} sig/settimana (30 giorni, r²=${trend.r2.toFixed(2)})`;
+    slopeEl.textContent = `Trend: ${word} di ~${Math.abs(perWeek)} sig/settimana (${periodLabel}, r²=${trend.r2.toFixed(2)})`;
   } else {
-    slopeEl.textContent = trend ? "Trend stabile (30 giorni)" : "Trend non ancora calcolabile";
+    slopeEl.textContent = trend ? `Trend stabile (${periodLabel})` : "Trend non ancora calcolabile";
   }
 
   root.querySelector("#kpi-total").textContent = sm.fmtNum(totalPeriod);
-  root.querySelector("#kpi-total-sub").textContent =
-    cmp.deltaPct != null
-      ? `${cmp.deltaPct > 0 ? "+" : ""}${cmp.deltaPct}% vs precedente`
-      : (prevTotal === 0 && totalPeriod === 0 ? "—" : "");
+  const kpiTotalSub = root.querySelector("#kpi-total-sub");
+  if (state.period === "all") {
+    kpiTotalSub.textContent = "totale storico";
+  } else if (cmp.deltaPct != null) {
+    kpiTotalSub.textContent = `${cmp.deltaPct > 0 ? "+" : ""}${cmp.deltaPct}% vs precedente`;
+  } else if (prevTotal === 0 && totalPeriod === 0) {
+    kpiTotalSub.textContent = "—";
+  } else {
+    kpiTotalSub.textContent = "";
+  }
 
   root.querySelector("#kpi-avg").textContent = sm.fmtNum(avgPeriod, 1);
   root.querySelector("#kpi-avg-sub").textContent = `su ${nonMissingDays} giorni attivi`;
@@ -358,22 +374,36 @@ async function refresh(root, counter) {
     root.querySelector("#kpi-streak-sub").textContent = "imposta un target";
   }
 
-  // Conv cards
+  // Conv cards — il valore "grande" è scoped al periodo; lifetime sta nel sub.
+  // Quando il periodo è "all" i due coincidono → mostro solo lifetime senza sub redundante.
   const showHealth = localStorage.getItem("contaapp:showHealth") !== "false";
   const moneyCard = root.querySelector("#conv-money-card");
   const lifeCard = root.querySelector("#conv-life-card");
+  const periodLong = PERIODS.find((p) => p.id === state.period)?.long || "periodo";
+  const isAllPeriod = state.period === "all";
+  const moneyTitleEl = root.querySelector("#conv-money-title");
+  const lifeTitleEl = root.querySelector("#conv-life-title");
+  const lifeSubEl = root.querySelector("#conv-life-sub");
 
   if (pricePerCig > 0 && baseline.value) {
     moneyCard.classList.remove("hidden");
-    root.querySelector("#conv-money-saved").textContent = sm.fmtMoney(sm.moneySaved(totalSaved, pricePerCig));
-    root.querySelector("#conv-money-period").textContent =
-      `${sm.fmtMoney(sm.moneySaved(savedInPeriod, pricePerCig))} in questo periodo`;
+    moneyTitleEl.textContent = isAllPeriod ? "Risparmio · da sempre" : `Risparmio · ${periodLong}`;
+    if (isAllPeriod) {
+      root.querySelector("#conv-money-saved").textContent = sm.fmtMoney(sm.moneySaved(totalSaved, pricePerCig));
+      root.querySelector("#conv-money-period").textContent = "";
+    } else {
+      root.querySelector("#conv-money-saved").textContent = sm.fmtMoney(sm.moneySaved(savedInPeriod, pricePerCig));
+      root.querySelector("#conv-money-period").textContent =
+        `${sm.fmtMoney(sm.moneySaved(totalSaved, pricePerCig))} da sempre`;
+    }
   } else if (pricePerCig > 0 && !baseline.value) {
     moneyCard.classList.remove("hidden");
+    moneyTitleEl.textContent = "Risparmio";
     root.querySelector("#conv-money-saved").textContent = "—";
     root.querySelector("#conv-money-period").textContent = "Imposta una baseline per calcolare i risparmi";
   } else {
     moneyCard.classList.remove("hidden");
+    moneyTitleEl.textContent = "Risparmio";
     root.querySelector("#conv-money-saved").textContent = "—";
     root.querySelector("#conv-money-period").innerHTML =
       `<button class="underline text-white" id="conv-money-cta">Imposta il prezzo per vederlo</button>`;
@@ -383,8 +413,16 @@ async function refresh(root, counter) {
 
   if (showHealth && baseline.value) {
     lifeCard.classList.remove("hidden");
-    const life = sm.lifeRegained(totalSaved);
-    root.querySelector("#conv-life-value").textContent = sm.formatLifeTime(life);
+    if (isAllPeriod) {
+      lifeTitleEl.textContent = "Tempo di vita guadagnato · da sempre";
+      root.querySelector("#conv-life-value").textContent = sm.formatLifeTime(sm.lifeRegained(totalSaved));
+      lifeSubEl.textContent = "~11 min per sigaretta evitata (stima CDC)";
+    } else {
+      lifeTitleEl.textContent = `Tempo di vita guadagnato · ${periodLong}`;
+      root.querySelector("#conv-life-value").textContent = sm.formatLifeTime(sm.lifeRegained(savedInPeriod));
+      const lifetimeFmt = sm.formatLifeTime(sm.lifeRegained(totalSaved));
+      lifeSubEl.textContent = `${lifetimeFmt} da sempre · ~11 min/sigaretta`;
+    }
   } else {
     lifeCard.classList.add("hidden");
   }
@@ -508,50 +546,47 @@ function drawTrend(el, slice, ma7Slice, ma30Slice, target) {
   if (charts.trend) { try { charts.trend.destroy(); } catch {} charts.trend = null; }
   if (!el || !el.isConnected) return;
 
-  // Costruisce le serie. Per il "Giornaliero" usiamo null sui giorni missing,
-  // ma se il valore reale è 0 lo lasciamo a 0 (NON null) — è un dato reale.
-  const daily = slice.map((r) => ({ x: r.day, y: r.missing ? null : r.n }));
-  const ma7Data = slice.map((r, i) => ({ x: r.day, y: ma7Slice[i] }));
-  const ma30Data = slice.map((r, i) => ({ x: r.day, y: ma30Slice[i] }));
+  // Filtriamo via i giorni missing/null da tutte le serie: con curve "smooth"
+  // ApexCharts non disegna in modo affidabile i tratti che attraversano i null
+  // (anche con connectNulls), quindi i marker apparirebbero "orfani". L'asse
+  // datetime preserva la spaziatura corretta anche se i punti non sono adiacenti.
+  // I 0 reali (app aperta, nessuna sigaretta) NON sono missing → restano nella serie.
+  const daily = slice
+    .filter((r) => !r.missing)
+    .map((r) => ({ x: r.day, y: r.n }));
+  const ma7Data = slice
+    .map((r, i) => ({ x: r.day, y: ma7Slice[i] }))
+    .filter((p) => p.y != null);
+  const ma30Data = slice
+    .map((r, i) => ({ x: r.day, y: ma30Slice[i] }))
+    .filter((p) => p.y != null);
 
-  // Escludi le serie tutte-null: Apex con smooth curve può crashare/non disegnare.
-  const hasDaily = daily.some((p) => p.y != null);
-  const hasMA7 = ma7Data.some((p) => p.y != null);
-  const hasMA30 = ma30Data.some((p) => p.y != null);
+  const hasDaily = daily.length > 0;
+  const hasMA7 = ma7Data.length > 0;
+  const hasMA30 = ma30Data.length > 0;
 
   const series = [];
   const colors = [];
   const widths = [];
-  const fillTypes = [];
-  if (hasDaily) { series.push({ name: "Giornaliero", data: daily });  colors.push("#e85454"); widths.push(2); fillTypes.push("gradient"); }
-  if (hasMA7)   { series.push({ name: "MA 7gg",      data: ma7Data }); colors.push("#10b981"); widths.push(3); fillTypes.push("solid");    }
-  if (hasMA30)  { series.push({ name: "MA 30gg",     data: ma30Data });colors.push("#6366f1"); widths.push(2); fillTypes.push("solid");    }
+  const curves = [];
+  if (hasDaily) { series.push({ name: "Giornaliero", data: daily });  colors.push("#e85454"); widths.push(2); curves.push("straight"); }
+  if (hasMA7)   { series.push({ name: "MA 7gg",      data: ma7Data }); colors.push("#10b981"); widths.push(3); curves.push("smooth");   }
+  if (hasMA30)  { series.push({ name: "MA 30gg",     data: ma30Data });colors.push("#6366f1"); widths.push(2); curves.push("smooth");   }
 
   if (series.length === 0) {
-    // Niente da disegnare: mostra placeholder testuale
     el.innerHTML = `<div class="text-center text-on-surface-variant text-sm py-12">Nessun dato nel periodo selezionato.</div>`;
     return;
   }
 
-  // Per pochi punti, curve "straight" + marker visibili (smooth con 1-2 punti non rende).
-  const validCount = daily.filter((p) => p.y != null).length;
-  const curve = validCount <= 3 ? "straight" : "smooth";
+  const validCount = daily.length;
   const markerSize = validCount <= 10 ? 4 : 0;
-  // Con pochi punti reali nel grafico, collegare i punti attraverso i null aiuta
-  // a vedere la linea (altrimenti i marker appaiono isolati).
-  const connectNulls = validCount <= 10;
 
   const opts = {
     chart: { type: "line", height: 240, ...BASE_CHART },
     series,
-    stroke: { curve, width: widths },
-    connectNulls,
+    stroke: { curve: curves, width: widths },
     colors,
     markers: { size: markerSize, hover: { size: markerSize + 2 } },
-    fill: {
-      type: fillTypes,
-      gradient: { opacityFrom: 0.25, opacityTo: 0, shadeIntensity: 0.5 },
-    },
     grid: {
       borderColor: "rgba(216,196,196,0.3)",
       strokeDashArray: 4,
@@ -728,6 +763,7 @@ function drawWeekday(el, buckets, peakIdx) {
         borderRadius: 6,
         borderRadiusApplication: "end",
         distributed: true,
+        dataLabels: { position: "top" },
       },
     },
     colors,
@@ -735,10 +771,10 @@ function drawWeekday(el, buckets, peakIdx) {
     dataLabels: {
       enabled: true,
       formatter: (v) => v > 0 ? v : "",
-      offsetY: -18,
+      offsetY: -16,
       style: { fontSize: "10px", colors: ["#1a1c1c"], fontWeight: 600 },
     },
-    grid: { borderColor: "rgba(216,196,196,0.3)", strokeDashArray: 4 },
+    grid: { borderColor: "rgba(216,196,196,0.3)", strokeDashArray: 4, padding: { top: 14 } },
     xaxis: {
       categories: ["Lun", "Mar", "Mer", "Gio", "Ven", "Sab", "Dom"],
       labels: { style: { fontSize: "11px", colors: "#5a4a4a" } },
@@ -769,7 +805,16 @@ function drawSaved(el, series, cumSaved) {
     grid: { borderColor: "rgba(216,196,196,0.3)", strokeDashArray: 4 },
     xaxis: {
       type: "datetime",
-      labels: { format: "MMM 'yy", style: { fontSize: "10px", colors: "#5a4a4a" } },
+      labels: {
+        style: { fontSize: "10px", colors: "#5a4a4a" },
+        datetimeUTC: false,
+        datetimeFormatter: {
+          year: "yyyy",
+          month: "MMM 'yy",
+          day: "d MMM",
+          hour: "HH:mm",
+        },
+      },
       axisBorder: { show: false },
       axisTicks: { show: false },
     },
