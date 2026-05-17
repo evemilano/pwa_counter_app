@@ -5,7 +5,7 @@ import { renderHistory } from "./history.js";
 import { renderSettings } from "./settings.js";
 import * as sync from "./sync.js";
 
-export const APP_VERSION = "v24";
+export const APP_VERSION = "v25";
 
 // Traccia i giorni in cui l'app è stata aperta. Serve a Statistiche per
 // distinguere giorni "zero sigarette" da giorni in cui l'utente è sparito.
@@ -31,10 +31,18 @@ const VIEWS = {
 };
 
 let currentView = "dashboard";
+let pendingRender = false;
+let lastRenderDay = db.startOfDay();
 
 export const bus = new EventTarget();
-export function notifyDataChanged() {
-  bus.dispatchEvent(new CustomEvent("data-changed"));
+export function notifyDataChanged(detail = {}) {
+  bus.dispatchEvent(new CustomEvent("data-changed", { detail }));
+}
+
+function isEditableInCurrentView(el) {
+  return !!el
+    && VIEWS[currentView].el.contains(el)
+    && /^(INPUT|TEXTAREA|SELECT)$/.test(el.tagName);
 }
 
 export function toast(msg, ms = 1800) {
@@ -52,6 +60,8 @@ export function toast(msg, ms = 1800) {
 export function show(view) {
   if (!VIEWS[view]) return;
   currentView = view;
+  pendingRender = false;
+  lastRenderDay = db.startOfDay();
   for (const [name, v] of Object.entries(VIEWS)) {
     v.el.classList.toggle("hidden", name !== view);
   }
@@ -140,8 +150,57 @@ document.getElementById("drawer-new-name").addEventListener("keydown", (e) => {
   if (e.key === "Enter") document.getElementById("drawer-add").click();
 });
 
-bus.addEventListener("data-changed", () => {
+bus.addEventListener("data-changed", (e) => {
+  // C1: chi ha già aggiornato il DOM in-place (dashboard +1/undo) chiede di
+  // saltare il re-render globale per preservare animazione e focus, ma lascia
+  // partire scheduleSync e altri listener del bus.
+  if (e.detail?.skipViewRefresh) return;
+  // C3: se l'utente sta digitando dentro la view corrente, posticipiamo il
+  // re-render finché non perde focus. Senza questa guardia, un pull remoto
+  // mid-typing distruggerebbe l'input.
+  if (isEditableInCurrentView(document.activeElement)) {
+    pendingRender = true;
+    return;
+  }
+  lastRenderDay = db.startOfDay();
   VIEWS[currentView].render(VIEWS[currentView].el);
+});
+
+document.addEventListener("focusout", () => {
+  if (!pendingRender) return;
+  // Attendi un tick: se il focus sta passando a un altro input nella stessa
+  // view (es. utente che tabba tra rename input), non renderizzare.
+  setTimeout(() => {
+    if (!pendingRender) return;
+    if (isEditableInCurrentView(document.activeElement)) return;
+    pendingRender = false;
+    lastRenderDay = db.startOfDay();
+    VIEWS[currentView].render(VIEWS[currentView].el);
+  }, 0);
+});
+
+// C4: refresh quando il giorno cambia (rollover di mezzanotte o wake-from-sleep).
+function refreshIfDayChanged() {
+  const today = db.startOfDay();
+  if (today === lastRenderDay) return;
+  lastRenderDay = today;
+  recordAppOpen();
+  notifyDataChanged();
+}
+
+function scheduleMidnightRefresh() {
+  const now = new Date();
+  const next = new Date(now);
+  next.setHours(24, 0, 0, 0);
+  const delay = next.getTime() - now.getTime() + 500;
+  setTimeout(() => {
+    refreshIfDayChanged();
+    scheduleMidnightRefresh();
+  }, delay);
+}
+
+document.addEventListener("visibilitychange", () => {
+  if (document.visibilityState === "visible") refreshIfDayChanged();
 });
 
 async function handleShortcut() {
@@ -160,6 +219,9 @@ async function handleShortcut() {
   }
   await db.addTap(counterId);
   db.setLastCounterId(counterId);
+  // C1: schedula il push remoto del tap dello shortcut. skipViewRefresh perché
+  // show("dashboard") che segue renderà comunque la view.
+  notifyDataChanged({ skipViewRefresh: true });
   const c = counters.find((c) => c.id === counterId);
   if (navigator.vibrate) navigator.vibrate(15);
   toast(`+1 → ${c.name}`);
@@ -229,6 +291,7 @@ async function main() {
   await handleShortcut();
   show("dashboard");
   renderVersionFooter();
+  scheduleMidnightRefresh();
 
   if ("serviceWorker" in navigator) {
     try {

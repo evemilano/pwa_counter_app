@@ -159,8 +159,19 @@ export async function renderSettings(root) {
       });
     });
     db.setLastCounterId(null);
-    toast("Tutti i dati cancellati");
     notifyDataChanged();
+    // C2: wipe è destructive — force-push subito così un pull intermedio o un
+    // 409 non rianima i dati appena cancellati.
+    if (sync.getConfig()) {
+      try {
+        await sync.syncForcePush();
+        toast("Tutti i dati cancellati, sync ok");
+      } catch (e) {
+        toast(`Cancellati localmente, sync fallita: ${e.message || e}`, 5000);
+      }
+    } else {
+      toast("Tutti i dati cancellati");
+    }
   });
 }
 

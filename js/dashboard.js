@@ -1,5 +1,5 @@
 import * as db from "./db.js";
-import { toast, show, escapeHtml } from "./app.js";
+import { toast, show, escapeHtml, notifyDataChanged } from "./app.js";
 
 export async function renderDashboard(root) {
   const counters = await db.listCounters();
@@ -102,6 +102,8 @@ export async function renderDashboard(root) {
     const d = newCount - yesterdayCount;
     diffEl.textContent = d === 0 ? "= rispetto a ieri" : `${d > 0 ? "+" : ""}${d} rispetto a ieri`;
     btnUndo.classList.remove("invisible");
+    // C1: schedula sync push senza distruggere l'animazione/il focus locale.
+    notifyDataChanged({ skipViewRefresh: true });
   });
 
   btnUndo.addEventListener("click", async () => {
@@ -113,6 +115,7 @@ export async function renderDashboard(root) {
     const d = newCount - yesterdayCount;
     diffEl.textContent = d === 0 ? "= rispetto a ieri" : `${d > 0 ? "+" : ""}${d} rispetto a ieri`;
     if (newCount === 0) btnUndo.classList.add("invisible");
+    notifyDataChanged({ skipViewRefresh: true });
   });
 }
 
