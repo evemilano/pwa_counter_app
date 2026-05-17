@@ -47,7 +47,7 @@ export async function renderHistory(root) {
     return;
   }
 
-  const sections = groups.map((g, idx) => sectionHtml(g, idx === 0, idx === 1)).join("");
+  const sections = buildSectionsHtml(groups);
 
   root.innerHTML = `
     ${summary}
@@ -146,78 +146,89 @@ function groupByDay(taps) {
   return [...map.values()].sort((a, b) => b.date - a.date);
 }
 
-function sectionHtml(group, isToday, isYesterday) {
+// Genera l'intera sezione cronologia. Oggi/Ieri restano espansi in cima;
+// tutto il resto viene annidato in Anno > Mese > Giorno, ogni livello in
+// <details> collassato di default.
+function buildSectionsHtml(groups) {
   const todayStart = startOfDay(new Date());
   const yStart = todayStart - 86400000;
-  const gStart = startOfDay(group.date);
-  let title;
-  if (gStart === todayStart) title = "Oggi";
-  else if (gStart === yStart) title = "Ieri";
-  else title = formatDate(group.date);
 
-  const muted = gStart < yStart;
-  const badgeColor = muted ? "muted" : "";
-  // Oggi e Ieri restano espansi; tutto il resto va in <details> collassato
-  // per ridurre lo scroll quando la cronologia diventa lunga.
-  const collapsible = gStart < yStart;
-
-  const rows = group.items.map((t) => {
-    const time = formatTime(t.timestamp);
-    const edit = toEditValues(t.timestamp);
-    return `
-      <div class="history-row ${badgeColor}" data-row-tap="${t.id}">
-        <div class="history-row-view">
-          <div class="flex items-center gap-3 min-w-0">
-            <div class="badge">
-              <span class="material-symbols-outlined" style="font-size:22px">${muted ? "history" : "add_circle"}</span>
-            </div>
-            <div class="min-w-0">
-              <div class="time">${time}</div>
-              <div class="label">Incremento</div>
-            </div>
-          </div>
-          <div class="row-actions">
-            <button type="button" class="edit" data-edit-tap="${t.id}" aria-label="Modifica orario tap">
-              <span class="material-symbols-outlined">edit</span>
-            </button>
-            <button type="button" class="del" data-delete-tap="${t.id}" aria-label="Elimina tap">
-              <span class="material-symbols-outlined">delete</span>
-            </button>
-          </div>
-        </div>
-        <div class="history-row-edit">
-          <label class="edit-label">Modifica data e ora (formato 24h)</label>
-          <div class="edit-fields">
-            <input type="date" class="edit-date" value="${edit.date}" aria-label="Data">
-            <input type="text" class="edit-time" value="${edit.time}" inputmode="numeric"
-              maxlength="5" placeholder="HH:MM" pattern="^([01]\\d|2[0-3]):[0-5]\\d$"
-              aria-label="Ora in formato 24h">
-          </div>
-          <div class="edit-actions">
-            <button type="button" class="btn-cancel" data-edit-cancel>Annulla</button>
-            <button type="button" class="btn-save" data-edit-save="${t.id}">Salva</button>
-          </div>
-        </div>
-      </div>`;
-  }).join("");
-
-  const badgeHtml = `<span class="text-label-caps ${muted ? "bg-surface-container text-on-surface-variant" : "bg-primary-fixed text-primary"} px-3 py-1 rounded-full">${group.items.length} tap</span>`;
-
-  if (collapsible) {
-    return `
-      <details class="history-section-old">
-        <summary>
-          <h3 class="text-label-caps uppercase tracking-widest text-on-surface-variant flex items-center gap-1.5">
-            <span class="material-symbols-outlined chevron" style="font-size:18px">chevron_right</span>
-            ${title}
-          </h3>
-          ${badgeHtml}
-        </summary>
-        <div class="space-y-2">${rows}</div>
-      </details>
-    `;
+  const expanded = [];
+  const old = [];
+  for (const g of groups) {
+    const gStart = startOfDay(g.date);
+    if (gStart === todayStart || gStart === yStart) expanded.push(g);
+    else old.push(g);
   }
 
+  const expandedHtml = expanded.map((g) => expandedSectionHtml(g, todayStart, yStart)).join("");
+
+  // Raggruppa i giorni vecchi per anno > mese
+  const byYear = new Map();
+  for (const g of old) {
+    const y = g.date.getFullYear();
+    const m = g.date.getMonth();
+    if (!byYear.has(y)) byYear.set(y, new Map());
+    const months = byYear.get(y);
+    if (!months.has(m)) months.set(m, []);
+    months.get(m).push(g);
+  }
+
+  const yearsHtml = [...byYear.entries()]
+    .sort((a, b) => b[0] - a[0])
+    .map(([year, months]) => yearDetailHtml(year, months))
+    .join("");
+
+  return expandedHtml + yearsHtml;
+}
+
+function rowHtml(t, muted) {
+  const time = formatTime(t.timestamp);
+  const edit = toEditValues(t.timestamp);
+  const badgeColor = muted ? "muted" : "";
+  return `
+    <div class="history-row ${badgeColor}" data-row-tap="${t.id}">
+      <div class="history-row-view">
+        <div class="flex items-center gap-3 min-w-0">
+          <div class="badge">
+            <span class="material-symbols-outlined" style="font-size:22px">${muted ? "history" : "add_circle"}</span>
+          </div>
+          <div class="min-w-0">
+            <div class="time">${time}</div>
+            <div class="label">Incremento</div>
+          </div>
+        </div>
+        <div class="row-actions">
+          <button type="button" class="edit" data-edit-tap="${t.id}" aria-label="Modifica orario tap">
+            <span class="material-symbols-outlined">edit</span>
+          </button>
+          <button type="button" class="del" data-delete-tap="${t.id}" aria-label="Elimina tap">
+            <span class="material-symbols-outlined">delete</span>
+          </button>
+        </div>
+      </div>
+      <div class="history-row-edit">
+        <label class="edit-label">Modifica data e ora (formato 24h)</label>
+        <div class="edit-fields">
+          <input type="date" class="edit-date" value="${edit.date}" aria-label="Data">
+          <input type="text" class="edit-time" value="${edit.time}" inputmode="numeric"
+            maxlength="5" placeholder="HH:MM" pattern="^([01]\\d|2[0-3]):[0-5]\\d$"
+            aria-label="Ora in formato 24h">
+        </div>
+        <div class="edit-actions">
+          <button type="button" class="btn-cancel" data-edit-cancel>Annulla</button>
+          <button type="button" class="btn-save" data-edit-save="${t.id}">Salva</button>
+        </div>
+      </div>
+    </div>`;
+}
+
+function expandedSectionHtml(group, todayStart, yStart) {
+  const gStart = startOfDay(group.date);
+  const title = gStart === todayStart ? "Oggi" : "Ieri";
+  const muted = false;
+  const rows = group.items.map((t) => rowHtml(t, muted)).join("");
+  const badgeHtml = `<span class="text-label-caps bg-primary-fixed text-primary px-3 py-1 rounded-full">${group.items.length} tap</span>`;
   return `
     <section class="mt-6">
       <div class="flex items-center justify-between mb-3">
@@ -229,6 +240,67 @@ function sectionHtml(group, isToday, isYesterday) {
   `;
 }
 
+function yearDetailHtml(year, monthsMap) {
+  const total = [...monthsMap.values()].reduce((acc, days) => acc + days.reduce((a, g) => a + g.items.length, 0), 0);
+  const monthsHtml = [...monthsMap.entries()]
+    .sort((a, b) => b[0] - a[0])
+    .map(([month, days]) => monthDetailHtml(month, days))
+    .join("");
+  return `
+    <details class="history-collapse history-collapse--year">
+      <summary>
+        <h3 class="font-display font-bold text-on-surface flex items-center gap-1.5" style="font-size:15px">
+          <span class="material-symbols-outlined chevron" style="font-size:20px">chevron_right</span>
+          ${year}
+        </h3>
+        <span class="text-label-caps bg-surface-container text-on-surface-variant px-3 py-1 rounded-full">${total} tap</span>
+      </summary>
+      <div class="history-collapse-body">${monthsHtml}</div>
+    </details>
+  `;
+}
+
+function monthDetailHtml(month, days) {
+  const total = days.reduce((a, g) => a + g.items.length, 0);
+  const daysHtml = days
+    .sort((a, b) => b.date - a.date)
+    .map((g) => dayDetailHtml(g))
+    .join("");
+  return `
+    <details class="history-collapse history-collapse--month">
+      <summary>
+        <h4 class="font-semibold text-on-surface flex items-center gap-1.5" style="font-size:13px">
+          <span class="material-symbols-outlined chevron" style="font-size:18px">chevron_right</span>
+          ${MONTH_NAMES_FULL[month]}
+        </h4>
+        <span class="text-label-caps bg-surface-container text-on-surface-variant px-3 py-1 rounded-full">${total} tap</span>
+      </summary>
+      <div class="history-collapse-body">${daysHtml}</div>
+    </details>
+  `;
+}
+
+function dayDetailHtml(group) {
+  const rows = group.items.map((t) => rowHtml(t, true)).join("");
+  const dayNum = group.date.getDate();
+  const wdayName = WEEKDAY_SHORT[(group.date.getDay() + 6) % 7];
+  return `
+    <details class="history-collapse history-collapse--day">
+      <summary>
+        <span class="text-label-caps uppercase tracking-widest text-on-surface-variant flex items-center gap-1.5">
+          <span class="material-symbols-outlined chevron" style="font-size:16px">chevron_right</span>
+          ${dayNum} · ${wdayName}
+        </span>
+        <span class="text-label-caps bg-surface-container text-on-surface-variant px-3 py-1 rounded-full">${group.items.length} tap</span>
+      </summary>
+      <div class="space-y-2 mt-2">${rows}</div>
+    </details>
+  `;
+}
+
+const MONTH_NAMES_FULL = ["Gennaio", "Febbraio", "Marzo", "Aprile", "Maggio", "Giugno", "Luglio", "Agosto", "Settembre", "Ottobre", "Novembre", "Dicembre"];
+const WEEKDAY_SHORT = ["Lun", "Mar", "Mer", "Gio", "Ven", "Sab", "Dom"];
+
 function startOfDay(d) {
   const x = new Date(d);
   x.setHours(0, 0, 0, 0);
@@ -237,8 +309,4 @@ function startOfDay(d) {
 function formatTime(ts) {
   const d = new Date(ts);
   return `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
-}
-function formatDate(d) {
-  const months = ["gen", "feb", "mar", "apr", "mag", "giu", "lug", "ago", "set", "ott", "nov", "dic"];
-  return `${d.getDate()} ${months[d.getMonth()]} ${d.getFullYear()}`;
 }
