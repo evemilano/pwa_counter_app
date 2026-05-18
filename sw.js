@@ -1,4 +1,6 @@
-const CACHE = "counter-v33";
+import { APP_VERSION } from "./js/version.js";
+
+const CACHE = `counter-${APP_VERSION}`;
 const ASSETS = [
   "./",
   "./index.html",
@@ -12,6 +14,7 @@ const ASSETS = [
   "./js/history.js",
   "./js/settings.js",
   "./js/sync.js",
+  "./js/version.js",
   "./icons/icon-192.png",
   "./icons/icon-512.png",
   "./icons/icon-maskable.png",

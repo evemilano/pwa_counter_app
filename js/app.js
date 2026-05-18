@@ -4,8 +4,9 @@ import { renderStats } from "./stats.js";
 import { renderHistory } from "./history.js";
 import { renderSettings } from "./settings.js";
 import * as sync from "./sync.js";
+import { APP_VERSION } from "./version.js";
 
-export const APP_VERSION = "v26";
+export { APP_VERSION };
 
 // Traccia i giorni in cui l'app è stata aperta. Serve a Statistiche per
 // distinguere giorni "zero sigarette" da giorni in cui l'utente è sparito.
@@ -295,7 +296,7 @@ async function main() {
 
   if ("serviceWorker" in navigator) {
     try {
-      await navigator.serviceWorker.register("./sw.js");
+      await navigator.serviceWorker.register("./sw.js", { type: "module" });
       renderVersionFooter();
     } catch (err) {
       console.warn("SW registration failed:", err);
