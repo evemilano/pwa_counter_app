@@ -151,7 +151,10 @@ function groupByDay(taps) {
 // <details> collassato di default.
 function buildSectionsHtml(groups) {
   const todayStart = startOfDay(new Date());
-  const yStart = todayStart - 86400000;
+  // Calendario e non -86.400.000: il giorno dopo un cambio d'ora legale la
+  // sottrazione fissa cade alle 23:00/01:00 e "Ieri" non matcha più nessun
+  // gruppo. startOfDay() finale per i fusi in cui il DST scatta a mezzanotte.
+  const yStart = startOfDay(new Date(db.addDays(todayStart, -1)));
 
   const expanded = [];
   const old = [];

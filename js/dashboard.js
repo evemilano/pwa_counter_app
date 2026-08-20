@@ -32,8 +32,13 @@ export async function renderDashboard(root) {
   const now = new Date();
   const todayStart = db.startOfDay(now);
   const todayEnd = db.endOfDay(now);
-  const yStart = db.addDays(todayStart, -1);
-  const yEnd = db.addDays(todayEnd, -1);
+  // Bordi di "ieri" per calendario. Il giorno prima va ricavato da todayStart e
+  // rinormalizzato: nei fusi in cui il DST scatta a mezzanotte (America/Santiago…)
+  // quella mezzanotte non esiste, e il solo addDays lascerebbe i bordi sfasati di
+  // un'ora, tagliando o duplicando i tap di confine. yEnd = todayStart - 1 chiude
+  // esattamente contro l'inizio di oggi, senza buchi.
+  const yStart = db.startOfDay(new Date(db.addDays(todayStart, -1)));
+  const yEnd = todayStart - 1;
   const [todayTaps, yesterdayCount, latest] = await Promise.all([
     db.getTapsInRange(active.id, todayStart, todayEnd),
     db.countTapsInRange(active.id, yStart, yEnd),

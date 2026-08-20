@@ -636,28 +636,34 @@ export function startOfDay(d = new Date()) {
   x.setHours(0, 0, 0, 0);
   return x.getTime();
 }
+// Ultimo istante del giorno = 1ms prima dell'inizio del giorno dopo, non
+// setHours(23,59,59,999). Nei fusi in cui il DST torna indietro A mezzanotte
+// (America/Santiago, Asia/Beirut…) l'ora 23:xx di quel giorno si ripete e
+// setHours() sceglie la prima occorrenza: l'ultima ora del giorno resterebbe
+// fuori da qualsiasi intervallo. Per costruzione questa forma non lascia buchi.
 export function endOfDay(d = new Date()) {
   const x = new Date(d);
-  x.setHours(23, 59, 59, 999);
-  return x.getTime();
+  x.setDate(x.getDate() + 1);
+  x.setHours(0, 0, 0, 0);
+  return x.getTime() - 1;
 }
 export function startOfWeek(d = new Date()) {
   const x = new Date(d);
-  x.setHours(0, 0, 0, 0);
   const day = x.getDay() || 7;
   x.setDate(x.getDate() - day + 1);
+  x.setHours(0, 0, 0, 0); // dopo lo spostamento: vedi nota in startOfDayPlus
   return x.getTime();
 }
 export function startOfMonth(d = new Date()) {
   const x = new Date(d);
-  x.setHours(0, 0, 0, 0);
   x.setDate(1);
+  x.setHours(0, 0, 0, 0);
   return x.getTime();
 }
 export function startOfYear(d = new Date()) {
   const x = new Date(d);
-  x.setHours(0, 0, 0, 0);
   x.setMonth(0, 1);
+  x.setHours(0, 0, 0, 0);
   return x.getTime();
 }
 export function addDays(ts, n) {
