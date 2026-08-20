@@ -8,22 +8,6 @@ import { APP_VERSION } from "./version.js";
 
 export { APP_VERSION };
 
-// Traccia i giorni in cui l'app è stata aperta. Serve a Statistiche per
-// distinguere giorni "zero sigarette" da giorni in cui l'utente è sparito.
-function recordAppOpen() {
-  try {
-    const key = "contaapp:appOpens";
-    const today = db.startOfDay();
-    const raw = localStorage.getItem(key);
-    const arr = raw ? JSON.parse(raw) : [];
-    if (!arr.includes(today)) {
-      arr.push(today);
-      while (arr.length > 365) arr.shift();
-      localStorage.setItem(key, JSON.stringify(arr));
-    }
-  } catch {}
-}
-
 const VIEWS = {
   dashboard: { el: document.getElementById("view-dashboard"), render: renderDashboard, title: "Counter" },
   stats:     { el: document.getElementById("view-stats"),     render: renderStats,     title: "Statistiche" },
@@ -185,7 +169,6 @@ function refreshIfDayChanged() {
   const today = db.startOfDay();
   if (today === lastRenderDay) return;
   lastRenderDay = today;
-  recordAppOpen();
   notifyDataChanged();
 }
 
@@ -282,7 +265,9 @@ async function renderVersionFooter() {
 }
 
 async function main() {
-  recordAppOpen();
+  // Statistiche non traccia più le aperture: un giorno senza tap è un giorno a
+  // zero sigarette. Ripuliamo la chiave lasciata dalle versioni precedenti.
+  try { localStorage.removeItem("contaapp:appOpens"); } catch {}
   // Avvia subito sync.init (registra listener + lancia syncNow in background).
   // NON aspettiamo: se la rete è lenta o il server lento, l'UI deve comunque
   // partire — la race "DB vuoto durante pull" è mitigata da Fix 3 (post-import

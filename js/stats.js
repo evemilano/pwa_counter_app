@@ -1,5 +1,5 @@
 import * as db from "./db.js";
-import { escapeHtml, show } from "./app.js";
+import { escapeHtml, show, bus } from "./app.js";
 import ApexCharts from "https://esm.sh/apexcharts@3.54.1";
 import * as sm from "./stats-math.js";
 
@@ -19,17 +19,25 @@ let charts = { trend: null, heatmap: null, hourly: null, weekday: null, saved: n
 let tapsCache = { counterId: null, taps: null, fetchedAt: 0 };
 const CACHE_TTL = 15_000;
 
+// La cache va invalidata a ogni mutazione, non solo per TTL: +1 dalla dashboard,
+// delete in Cronologia o import da un pull remoto. Senza questo, entrando in
+// Statistiche entro CACHE_TTL si rileggerebbe l'array stantio.
+// Registrazione lazy (come sync.init): stats.js viene valutato prima di app.js
+// per l'import circolare, quindi `bus` a top-level sarebbe in TDZ.
+let busHooked = false;
+function hookBus() {
+  if (busHooked) return;
+  busHooked = true;
+  bus.addEventListener("data-changed", invalidateTapsCache);
+}
+function invalidateTapsCache() {
+  tapsCache = { counterId: null, taps: null, fetchedAt: 0 };
+}
+
 function disposeCharts() {
   for (const k of Object.keys(charts)) {
     if (charts[k]) { try { charts[k].destroy(); } catch {} charts[k] = null; }
   }
-}
-
-function getAppOpens() {
-  try {
-    const raw = localStorage.getItem("contaapp:appOpens");
-    return raw ? JSON.parse(raw) : [];
-  } catch { return []; }
 }
 
 async function loadTaps(counterId) {
@@ -43,6 +51,7 @@ async function loadTaps(counterId) {
 }
 
 export async function renderStats(root) {
+  hookBus();
   disposeCharts();
   const counters = await db.listCounters();
   if (counters.length === 0) {
@@ -234,37 +243,41 @@ async function refresh(root, counter) {
   const target = Number(counter.dailyTarget) || 0;
   const pricePerCig = Number(counter.pricePerCig) || 0;
   const baselineOverride = Number(counter.baselineOverride) || 0;
-  const appOpens = getAppOpens();
-  const DAY = 24 * 60 * 60 * 1000;
 
   // Storia COMPLETA dalla prima sigaretta. Serve a baseline, streak, trend, savings.
   const firstDay = sm.firstTapDay(taps) ?? today;
-  const historicSeries = sm.buildDailySeries(taps, firstDay, today, appOpens);
+  const historicSeries = sm.buildDailySeries(taps, firstDay, today);
 
   // Baseline su intera storia
   const baseline = sm.computeBaseline(historicSeries, baselineOverride, target);
 
   // Periodo selezionato: lo span temporale che l'utente vuole vedere nei grafici.
-  // Costruiamo `series` denso dal periodo from (anche prima di firstDay → giorni
-  // missing). Per dare contesto storico alle MA all'inizio del periodo, anticipo
-  // l'inizio di altri 29 giorni (così MA30 ha base).
-  const { from: periodFrom, to: periodTo } = sm.slicePeriod(historicSeries, state.period, today);
-  const computeFrom = periodFrom - 29 * DAY;
-  const series = sm.buildDailySeries(taps, computeFrom, today, appOpens);
+  // Per dare contesto storico alle MA all'inizio del periodo anticipo l'inizio di
+  // altri 29 giorni (così MA30 ha base). Entrambi i bordi sono clampati a
+  // firstDay: fuori dalla finestra di osservazione non ci sono giorni, e
+  // rappresentarli come 0 falserebbe medie, trend e confronti.
+  const { from: rawPeriodFrom, to: periodTo } = sm.slicePeriod(historicSeries, state.period, today);
+  const periodFrom = Math.max(rawPeriodFrom, firstDay);
+  const computeFrom = Math.max(sm.startOfDayPlus(periodFrom, -29), firstDay);
+  const series = sm.buildDailySeries(taps, computeFrom, today);
 
   // MA su series estesa (così l'inizio del periodo ha MA già stabile)
   const ma7Full = sm.computeMA(series, 7);
   const ma30Full = sm.computeMA(series, 30);
 
-  // Slice = la coda di series corrispondente esattamente al periodo selezionato
-  const sliceStartIdx = Math.round((periodFrom - computeFrom) / DAY);
+  // Slice = la coda di series corrispondente esattamente al periodo selezionato.
+  // Cercato per valore e non calcolato come delta/DAY: series è una griglia di
+  // mezzanotti locali, e attraverso un cambio d'ora i delta in ms non sono più
+  // multipli esatti di un giorno.
+  const foundIdx = series.findIndex((r) => r.day >= periodFrom);
+  const sliceStartIdx = foundIdx === -1 ? series.length : foundIdx;
   const slice = series.slice(sliceStartIdx);
   const ma7Slice = ma7Full.slice(sliceStartIdx);
   const ma30Slice = ma30Full.slice(sliceStartIdx);
 
   const totalPeriod = slice.reduce((a, r) => a + r.n, 0);
-  const nonMissingDays = slice.filter((r) => !r.missing).length;
-  const avgPeriod = nonMissingDays > 0 ? totalPeriod / nonMissingDays : 0;
+  const daysInPeriod = slice.length;
+  const avgPeriod = daysInPeriod > 0 ? totalPeriod / daysInPeriod : 0;
   const ma7 = ma7Full;
   const ma30 = ma30Full;
 
@@ -283,8 +296,9 @@ async function refresh(root, counter) {
   // Trend sul periodo selezionato dalla pillola.
   const trend = sm.computeTrend(slice, { windowDays: slice.length, baseline: baseline.value || 0 });
 
-  // Streak
-  const streak = sm.computeStreaks(series, target);
+  // Streak — la card dice "da sempre", quindi va sull'intera storia, non sulla
+  // series del periodo selezionato (che la troncherebbe alla pillola attiva).
+  const streak = sm.computeStreaks(historicSeries, target);
   const onTarget = sm.daysOnTarget(slice, target);
 
   // Confronto periodo vs precedente. Per "all" non esiste un "precedente",
@@ -294,10 +308,12 @@ async function refresh(root, counter) {
   const sliceLen = slice.length;
   let prevTotal = 0;
   let cmp = { direction: "flat", deltaPct: null, deltaAbs: 0 };
-  if (state.period !== "all") {
-    const prevTo = periodFrom - DAY;
-    const prevFrom = prevTo - (sliceLen - 1) * DAY;
-    const prevSlice = sm.buildDailySeries(taps, prevFrom, prevTo, appOpens);
+  const prevTo = sm.startOfDayPlus(periodFrom, -1);
+  const prevFrom = sm.startOfDayPlus(prevTo, -(sliceLen - 1));
+  // Confronto solo se la finestra precedente è interamente osservata: misurarsi
+  // contro giorni antecedenti al primo tap significa misurarsi contro zeri finti.
+  if (state.period !== "all" && prevFrom >= firstDay) {
+    const prevSlice = sm.buildDailySeries(taps, prevFrom, prevTo);
     prevTotal = prevSlice.reduce((a, r) => a + r.n, 0);
     cmp = sm.compareSums(totalPeriod, prevTotal);
   }
@@ -312,11 +328,14 @@ async function refresh(root, counter) {
   const peakH = sm.peakHour(hourBuckets);
   const peakW = sm.peakWeekday(wdayBuckets);
 
-  // Saved cumulative su INTERA storia (non sulla series estesa con buffer di null)
-  const totalSaved = baseline.value ? sm.savedCigarettesTotal(historicSeries, baseline.value) : 0;
-  const savedInPeriod = baseline.value
-    ? slice.filter((r) => !r.missing).reduce((a, r) => a + Math.max(0, baseline.value - r.n), 0)
-    : 0;
+  // Sigarette evitate: solo giorni CONCLUSI. Oggi ha un n ancora parziale —
+  // contarlo darebbe +baseline a mezzanotte per poi calare a ogni tap, cioè una
+  // curva cumulativa che scende. Oggi entra nel conteggio stanotte.
+  // Base = intera storia (non la series estesa, che parte prima del periodo).
+  const completedHistory = historicSeries.slice(0, -1);
+  const completedSlice = slice.slice(0, -1);
+  const totalSaved = baseline.value ? sm.savedCigarettesTotal(completedHistory, baseline.value) : 0;
+  const savedInPeriod = baseline.value ? sm.savedCigarettesTotal(completedSlice, baseline.value) : 0;
 
   // ── Render testo ─────────────────────────────────────────
   const hero = root.querySelector("#hero-ma7");
@@ -360,7 +379,7 @@ async function refresh(root, counter) {
   }
 
   root.querySelector("#kpi-avg").textContent = sm.fmtNum(avgPeriod, 1);
-  root.querySelector("#kpi-avg-sub").textContent = `su ${nonMissingDays} giorni attivi`;
+  root.querySelector("#kpi-avg-sub").textContent = `su ${daysInPeriod} giorni tracciati`;
 
   if (target > 0) {
     root.querySelector("#kpi-ontarget").textContent = String(onTarget.on);
@@ -439,10 +458,10 @@ async function refresh(root, counter) {
     banner.classList.add("hidden");
   }
 
-  // Saved section: nascondi se baseline none
+  // Saved section: serve una baseline e almeno un giorno concluso
+  const canShowSaved = !!baseline.value && completedHistory.length > 0;
   const savedSection = root.querySelector("#saved-section");
-  if (baseline.value) savedSection.classList.remove("hidden");
-  else savedSection.classList.add("hidden");
+  savedSection.classList.toggle("hidden", !canShowSaved);
 
   // Insight
   root.querySelector("#insight-text").textContent = pickInsight({
@@ -469,11 +488,11 @@ async function refresh(root, counter) {
   drawHeatmap(root.querySelector("#chart-heatmap"), historicSeries, target, baseline.value || 0);
   drawHourly(root.querySelector("#chart-hourly"), hourBuckets, peakH.hour);
   drawWeekday(root.querySelector("#chart-weekday"), wdayBuckets, peakW.wday);
-  if (baseline.value) {
-    const histCumSaved = sm.savedCigarettesCumulative(historicSeries, baseline.value);
-    drawSaved(root.querySelector("#chart-saved"), historicSeries, histCumSaved);
+  if (canShowSaved) {
+    const histCumSaved = sm.savedCigarettesCumulative(completedHistory, baseline.value);
+    drawSaved(root.querySelector("#chart-saved"), completedHistory, histCumSaved);
     root.querySelector("#saved-note").textContent =
-      `Baseline: ${sm.fmtNum(baseline.value, 1)} sig/g (${labelBaselineSource(baseline.source)}) · totale evitate: ${sm.fmtNum(totalSaved)}`;
+      `Baseline: ${sm.fmtNum(baseline.value, 1)} sig/g (${labelBaselineSource(baseline.source)}) · totale evitate: ${sm.fmtNum(totalSaved)} · il giorno in corso viene conteggiato a fine giornata`;
   }
 }
 
@@ -546,14 +565,11 @@ function drawTrend(el, slice, ma7Slice, ma30Slice, target) {
   if (charts.trend) { try { charts.trend.destroy(); } catch {} charts.trend = null; }
   if (!el || !el.isConnected) return;
 
-  // Filtriamo via i giorni missing/null da tutte le serie: con curve "smooth"
-  // ApexCharts non disegna in modo affidabile i tratti che attraversano i null
-  // (anche con connectNulls), quindi i marker apparirebbero "orfani". L'asse
-  // datetime preserva la spaziatura corretta anche se i punti non sono adiacenti.
-  // I 0 reali (app aperta, nessuna sigaretta) NON sono missing → restano nella serie.
-  const daily = slice
-    .filter((r) => !r.missing)
-    .map((r) => ({ x: r.day, y: r.n }));
+  // Il giornaliero è denso: ogni giorno della finestra ha un valore (0 incluso).
+  // Sulle MA filtriamo i null di inizio serie: con curve "smooth" ApexCharts non
+  // disegna in modo affidabile i tratti che attraversano i null (anche con
+  // connectNulls). L'asse datetime preserva comunque la spaziatura corretta.
+  const daily = slice.map((r) => ({ x: r.day, y: r.n }));
   const ma7Data = slice
     .map((r, i) => ({ x: r.day, y: ma7Slice[i] }))
     .filter((p) => p.y != null);
@@ -646,22 +662,24 @@ function drawHeatmap(el, series, target, baselineValue) {
 
   // Costruisci griglia 7 (Lun-Dom) × N settimane (ultimi 52 + corrente)
   const today = series.length ? series[series.length - 1].day : db.startOfDay();
-  const DAY = 24 * 60 * 60 * 1000;
-  // Trova il lunedì della settimana 52 fa
+  // Trova il lunedì della settimana 52 fa. Tutta la griglia va costruita con
+  // aritmetica di calendario: 53 settimane attraversano sempre almeno un cambio
+  // d'ora, e con i multipli di 86.400.000 ms le celle successive cadrebbero alle
+  // 01:00/23:00, mancando le chiavi (mezzanotte locale) della serie.
   const todayDate = new Date(today);
   const dow = (todayDate.getDay() + 6) % 7; // Lun=0
-  const mondayThisWeek = today - dow * DAY;
-  const startMonday = mondayThisWeek - 52 * 7 * DAY;
+  const mondayThisWeek = sm.startOfDayPlus(today, -dow);
+  const startMonday = sm.startOfDayPlus(mondayThisWeek, -52 * 7);
   // Mappa day -> n dalla serie
   const byDay = new Map();
-  for (const r of series) if (!r.missing) byDay.set(r.day, r.n);
+  for (const r of series) byDay.set(r.day, r.n);
   // Costruisci serie per ApexCharts heatmap: una series per riga (giorno settimana)
   const rowNames = ["Lun", "Mar", "Mer", "Gio", "Ven", "Sab", "Dom"];
   const seriesData = [];
   for (let r = 6; r >= 0; r--) {
     const data = [];
     for (let w = 0; w < 53; w++) {
-      const dayTs = startMonday + (w * 7 + r) * DAY;
+      const dayTs = sm.startOfDayPlus(startMonday, w * 7 + r);
       const label = `S${w + 1}`;
       let val = null;
       if (dayTs <= today) {
