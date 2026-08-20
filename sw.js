@@ -70,7 +70,19 @@ function networkFirst(req) {
       }
       return res;
     })
-    .catch(() => caches.match(req));
+    .catch(async () => {
+      // ignoreSearch: le navigazioni con query (es. lo shortcut ./?action=quick-inc
+      // del manifest) non matchano l'entry "./" precacheata. Nessun asset usa la
+      // query string per il versioning, quindi il match allargato e' sicuro.
+      const cached = await caches.match(req, { ignoreSearch: true });
+      if (cached) return cached;
+      if (req.mode === "navigate") {
+        const shell = await caches.match("./index.html");
+        if (shell) return shell;
+      }
+      // Mai risolvere a undefined: respondWith(undefined) e' un TypeError.
+      return Response.error();
+    });
 }
 
 function staleWhileRevalidate(req) {
@@ -83,7 +95,7 @@ function staleWhileRevalidate(req) {
         }
         return res;
       })
-      .catch(() => cached);
+      .catch(() => cached || Response.error());
     return cached || fetched;
   });
 }
