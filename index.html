@@ -56,6 +56,41 @@
     }
   </style>
 
+  <script>
+    // Colore primario casuale a ogni apertura (mai uguale al precedente).
+    // Gira prima di Tailwind così non c'è flash del colore di default.
+    (function () {
+      var THEMES = {
+        red:     { p: "#e85454", dark: "#c93838", deep: "#8a1818", fixed: "#fde2e2", soft: "#fad2cf", mid: "#f08585" },
+        orange:  { p: "#ea580c", dark: "#c2410c", deep: "#7c2d12", fixed: "#ffedd5", soft: "#fed7aa", mid: "#fb923c" },
+        amber:   { p: "#d97706", dark: "#b45309", deep: "#78350f", fixed: "#fef3c7", soft: "#fde68a", mid: "#fbbf24" },
+        teal:    { p: "#0d9488", dark: "#0f766e", deep: "#134e4a", fixed: "#ccfbf1", soft: "#99f6e4", mid: "#2dd4bf" },
+        sky:     { p: "#0284c7", dark: "#0369a1", deep: "#0c4a6e", fixed: "#e0f2fe", soft: "#bae6fd", mid: "#38bdf8" },
+        blue:    { p: "#2563eb", dark: "#1d4ed8", deep: "#1e3a8a", fixed: "#dbeafe", soft: "#bfdbfe", mid: "#60a5fa" },
+        violet:  { p: "#7c3aed", dark: "#6d28d9", deep: "#4c1d95", fixed: "#ede9fe", soft: "#ddd6fe", mid: "#a78bfa" },
+        fuchsia: { p: "#c026d3", dark: "#a21caf", deep: "#701a75", fixed: "#fae8ff", soft: "#f5d0fe", mid: "#e879f9" },
+        pink:    { p: "#db2777", dark: "#be185d", deep: "#831843", fixed: "#fce7f3", soft: "#fbcfe8", mid: "#f472b6" },
+      };
+      var KEY = "contaapp:lastTheme";
+      var last = null;
+      try { last = localStorage.getItem(KEY); } catch (e) {}
+      var names = Object.keys(THEMES).filter(function (n) { return n !== last; });
+      var name = names[Math.floor(Math.random() * names.length)];
+      try { localStorage.setItem(KEY, name); } catch (e) {}
+      var t = THEMES[name];
+      var rgb = function (h) { return [1, 3, 5].map(function (i) { return parseInt(h.substr(i, 2), 16); }).join(" "); };
+      var st = document.documentElement.style;
+      st.setProperty("--primary", t.p);
+      st.setProperty("--primary-rgb", rgb(t.p));
+      st.setProperty("--primary-dark", t.dark);
+      st.setProperty("--primary-dark-rgb", rgb(t.dark));
+      st.setProperty("--primary-deep", t.deep);
+      st.setProperty("--primary-fixed", t.fixed);
+      st.setProperty("--primary-fixed-rgb", rgb(t.fixed));
+      st.setProperty("--primary-soft", t.soft);
+      st.setProperty("--primary-mid", t.mid);
+    })();
+  </script>
   <script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
   <script>
     tailwind.config = {
@@ -63,11 +98,11 @@
       theme: {
         extend: {
           colors: {
-            "primary": "#e85454",
-            "primary-dark": "#c93838",
-            "primary-fixed": "#fde2e2",
+            "primary": "rgb(var(--primary-rgb) / <alpha-value>)",
+            "primary-dark": "rgb(var(--primary-dark-rgb) / <alpha-value>)",
+            "primary-fixed": "rgb(var(--primary-fixed-rgb) / <alpha-value>)",
             "on-primary": "#ffffff",
-            "primary-container": "#e85454",
+            "primary-container": "rgb(var(--primary-rgb) / <alpha-value>)",
             "surface": "#fffafa",
             "surface-bright": "#ffffff",
             "surface-container-lowest": "#ffffff",

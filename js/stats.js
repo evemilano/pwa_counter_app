@@ -19,6 +19,11 @@ let charts = { trend: null, heatmap: null, hourly: null, weekday: null, saved: n
 let tapsCache = { counterId: null, taps: null, fetchedAt: 0 };
 const CACHE_TTL = 15_000;
 
+// Colori primari del tema corrente (scelti a ogni apertura in index.html).
+function themeColor(name) {
+  return getComputedStyle(document.documentElement).getPropertyValue(`--primary${name ? "-" + name : ""}`).trim();
+}
+
 // La cache va invalidata a ogni mutazione, non solo per TTL: +1 dalla dashboard,
 // delete in Cronologia o import da un pull remoto. Senza questo, entrando in
 // Statistiche entro CACHE_TTL si rileggerebbe l'array stantio.
@@ -162,7 +167,7 @@ function buildSkeleton(counter) {
       </div>
       <div id="chart-trend" class="-mx-2" style="min-height:240px"></div>
       <div class="text-xs text-on-surface-variant mt-2 flex flex-wrap gap-3 items-center">
-        <span class="flex items-center gap-1"><span class="inline-block w-2 h-2 rounded-full" style="background:#e85454"></span>Giornaliero</span>
+        <span class="flex items-center gap-1"><span class="inline-block w-2 h-2 rounded-full" style="background:var(--primary)"></span>Giornaliero</span>
         <span class="flex items-center gap-1"><span class="inline-block w-2 h-2 rounded-full" style="background:#10b981"></span>MA 7gg</span>
         <span class="flex items-center gap-1"><span class="inline-block w-2 h-2 rounded-full" style="background:#6366f1"></span>MA 30gg</span>
         <span class="flex items-center gap-1" id="trend-target-legend" hidden><span class="inline-block w-3 h-0.5" style="background:#5a4a4a"></span>Target</span>
@@ -585,7 +590,7 @@ function drawTrend(el, slice, ma7Slice, ma30Slice, target) {
   const colors = [];
   const widths = [];
   const curves = [];
-  if (hasDaily) { series.push({ name: "Giornaliero", data: daily });  colors.push("#e85454"); widths.push(2); curves.push("straight"); }
+  if (hasDaily) { series.push({ name: "Giornaliero", data: daily });  colors.push(themeColor()); widths.push(2); curves.push("straight"); }
   if (hasMA7)   { series.push({ name: "MA 7gg",      data: ma7Data }); colors.push("#10b981"); widths.push(3); curves.push("smooth");   }
   if (hasMA30)  { series.push({ name: "MA 30gg",     data: ma30Data });colors.push("#6366f1"); widths.push(2); curves.push("smooth");   }
 
@@ -702,10 +707,10 @@ function drawHeatmap(el, series, target, baselineValue) {
         colorScale: {
           ranges: [
             { from: -0.5, to: 0,       color: "#f4eaea", name: "—" },
-            { from: 0.5,  to: T * 0.5, color: "#fad2cf", name: "lieve" },
-            { from: T * 0.5 + 0.001, to: T,       color: "#f08585", name: "vicino target" },
-            { from: T + 0.001, to: T * 1.5,  color: "#e85454", name: "sopra target" },
-            { from: T * 1.5 + 0.001, to: 99999,    color: "#8a1818", name: "molto sopra" },
+            { from: 0.5,  to: T * 0.5, color: themeColor("soft"), name: "lieve" },
+            { from: T * 0.5 + 0.001, to: T,       color: themeColor("mid"), name: "vicino target" },
+            { from: T + 0.001, to: T * 1.5,  color: themeColor(), name: "sopra target" },
+            { from: T * 1.5 + 0.001, to: 99999,    color: themeColor("deep"), name: "molto sopra" },
           ],
         },
       },
@@ -732,7 +737,7 @@ function drawHeatmap(el, series, target, baselineValue) {
 function drawHourly(el, buckets, peakIdx) {
   if (charts.hourly) { try { charts.hourly.destroy(); } catch {} charts.hourly = null; }
   if (!el || !el.isConnected) return;
-  const colors = buckets.map((_, i) => i === peakIdx ? "#8a1818" : "#e85454");
+  const colors = buckets.map((_, i) => i === peakIdx ? themeColor("deep") : themeColor());
   const opts = {
     chart: { type: "bar", height: 180, ...BASE_CHART },
     series: [{ name: "Sigarette", data: buckets }],
@@ -771,7 +776,7 @@ function drawHourly(el, buckets, peakIdx) {
 function drawWeekday(el, buckets, peakIdx) {
   if (charts.weekday) { try { charts.weekday.destroy(); } catch {} charts.weekday = null; }
   if (!el || !el.isConnected) return;
-  const colors = buckets.map((_, i) => i === peakIdx ? "#8a1818" : "#e85454");
+  const colors = buckets.map((_, i) => i === peakIdx ? themeColor("deep") : themeColor());
   const opts = {
     chart: { type: "bar", height: 160, ...BASE_CHART },
     series: [{ name: "Sigarette", data: buckets }],
