@@ -201,7 +201,14 @@ async function handleShortcut() {
   if (counterId == null || !counters.find((c) => c.id === counterId)) {
     counterId = counters[counters.length - 1].id;
   }
-  await db.addTap(counterId);
+  try {
+    await db.addTap(counterId);
+  } catch (err) {
+    console.error("[shortcut] addTap fallito:", err);
+    toast("⚠ Tap NON salvato, riprova", 4000);
+    history.replaceState({}, "", location.pathname);
+    return false;
+  }
   db.setLastCounterId(counterId);
   // C1: schedula il push remoto del tap dello shortcut. skipViewRefresh perché
   // show("dashboard") che segue renderà comunque la view.
@@ -273,6 +280,7 @@ async function main() {
   // partire — la race "DB vuoto durante pull" è mitigata da Fix 3 (post-import
   // collapse) e Fix 6 (dedup server-side).
   sync.init();
+  db.requestPersistentStorage();
 
   await handleShortcut();
   show("dashboard");

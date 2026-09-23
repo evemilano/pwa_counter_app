@@ -97,11 +97,25 @@ export async function renderDashboard(root) {
   const diffEl = root.querySelector("#diff-text");
 
   btnPlus.addEventListener("click", async () => {
-    await db.addTap(active.id);
+    try {
+      await db.addTap(active.id);
+    } catch (err) {
+      console.error("[dashboard] addTap fallito:", err);
+      if (navigator.vibrate) navigator.vibrate([60, 60, 60]);
+      toast("⚠ Tap NON salvato, riprova", 4000);
+      return;
+    }
     if (navigator.vibrate) navigator.vibrate(12);
     btnPlus.classList.remove("pop");
     void btnPlus.offsetWidth;
     btnPlus.classList.add("pop");
+    // Vista renderizzata prima di mezzanotte: il tap è salvato con l'ora giusta,
+    // ma i bordi "oggi/ieri" sono vecchi. Ri-renderizza tutto invece di contare
+    // nell'intervallo sbagliato.
+    if (db.startOfDay() !== todayStart) {
+      notifyDataChanged();
+      return;
+    }
     const newCount = await db.countTapsInRange(active.id, todayStart, todayEnd);
     totalEl.textContent = String(newCount);
     const d = newCount - yesterdayCount;

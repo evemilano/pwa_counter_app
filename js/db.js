@@ -142,15 +142,47 @@ export async function deleteCounter(id) {
   });
 }
 
+// Dopo una lunga sospensione in background (Android/iOS) il browser può chiudere
+// la connessione IndexedDB: la prima scrittura al resume fallisce e, senza retry,
+// il tap andrebbe perso in silenzio. Riapriamo la connessione e ritentiamo una volta.
+const CONNECTION_ERRORS = new Set(["DatabaseClosedError", "InvalidStateError", "UnknownError", "AbortError"]);
+
+async function withReopen(fn) {
+  try {
+    return await fn();
+  } catch (err) {
+    if (!CONNECTION_ERRORS.has(err?.name)) throw err;
+    console.warn("[db] connessione IndexedDB persa, riapro e ritento:", err);
+    try { db.close({ disableAutoOpen: false }); } catch {}
+    await db.open();
+    return fn();
+  }
+}
+
 export async function addTap(counterId, ts = Date.now()) {
-  const now = Date.now();
-  return db.taps.add({
-    uid: newUid(),
-    counterId,
-    timestamp: ts,
-    updatedAt: now,
-    deletedAt: null,
+  const uid = newUid();
+  return withReopen(async () => {
+    // Stesso uid tra i tentativi: se il primo commit fosse andato a buon fine
+    // nonostante l'errore, non creiamo un doppione.
+    const existing = await db.taps.where("uid").equals(uid).first();
+    if (existing) return existing.id;
+    return db.taps.add({
+      uid,
+      counterId,
+      timestamp: ts,
+      updatedAt: Date.now(),
+      deletedAt: null,
+    });
   });
+}
+
+// Chiede al browser di non sfrattare IndexedDB sotto pressione di spazio.
+export async function requestPersistentStorage() {
+  try {
+    if (!navigator.storage?.persist) return false;
+    if (await navigator.storage.persisted()) return true;
+    return await navigator.storage.persist();
+  } catch { return false; }
 }
 
 export async function deleteTap(tapId) {

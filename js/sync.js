@@ -9,6 +9,9 @@ const MAX_RETRIES = 3;
 let debounceTimer = null;
 let inFlight = null;
 let suppressSchedule = false;
+// Modifiche locali arrivate mentre una sync era già in corso: l'export di quella
+// sync potrebbe non includerle, quindi ne serve un'altra appena finisce.
+let rerunAfterFlight = false;
 
 export function getConfig() {
   try {
@@ -86,11 +89,15 @@ export async function syncNow({ silent = false } = {}) {
     if (!silent) setState({ lastError: "Non configurato" });
     return { skipped: true };
   }
-  if (inFlight) return inFlight;
+  if (inFlight) {
+    rerunAfterFlight = true;
+    return inFlight;
+  }
   if (!silent) setState({ lastError: null, syncing: true });
 
   inFlight = (async () => {
     let mergedRemote = false;
+    rerunAfterFlight = false;
     try {
       let remote = await fetchRemote();
       let expectedVersion = remote.version || 0;
@@ -134,6 +141,10 @@ export async function syncNow({ silent = false } = {}) {
       throw err;
     } finally {
       inFlight = null;
+      if (rerunAfterFlight) {
+        rerunAfterFlight = false;
+        scheduleSync();
+      }
     }
   })();
 
@@ -181,8 +192,18 @@ export function scheduleSync() {
   if (!isConfigured()) return;
   clearTimeout(debounceTimer);
   debounceTimer = setTimeout(() => {
+    debounceTimer = null;
     syncNow({ silent: true }).catch(() => {});
   }, DEBOUNCE_MS);
+}
+
+// L'app va in background (schermo spento, cambio app): i timer vengono congelati,
+// quindi un push in debounce partirebbe solo al prossimo resume. Anticipalo.
+function flushPending() {
+  if (!debounceTimer) return;
+  clearTimeout(debounceTimer);
+  debounceTimer = null;
+  syncNow({ silent: true }).catch(() => {});
 }
 
 let initialized = false;
@@ -191,6 +212,11 @@ export function init() {
   initialized = true;
   bus.addEventListener("data-changed", scheduleSync);
   window.addEventListener("online", () => syncNow({ silent: true }).catch(() => {}));
+  document.addEventListener("visibilitychange", () => {
+    if (document.visibilityState === "hidden") flushPending();
+    else if (isConfigured()) syncNow({ silent: true }).catch(() => {});
+  });
+  window.addEventListener("pagehide", flushPending);
   if (isConfigured()) {
     syncNow({ silent: true }).catch(() => {});
   }
