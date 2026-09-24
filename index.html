@@ -60,16 +60,13 @@
     // Colore primario casuale a ogni apertura (mai uguale al precedente).
     // Gira prima di Tailwind così non c'è flash del colore di default.
     (function () {
+      // Solo colori saturi ad alto contrasto (>= 4.5:1 su bianco): niente tinte chiare.
       var THEMES = {
-        red:     { p: "#e85454", dark: "#c93838", deep: "#8a1818", fixed: "#fde2e2", soft: "#fad2cf", mid: "#f08585" },
-        orange:  { p: "#ea580c", dark: "#c2410c", deep: "#7c2d12", fixed: "#ffedd5", soft: "#fed7aa", mid: "#fb923c" },
-        amber:   { p: "#d97706", dark: "#b45309", deep: "#78350f", fixed: "#fef3c7", soft: "#fde68a", mid: "#fbbf24" },
-        teal:    { p: "#0d9488", dark: "#0f766e", deep: "#134e4a", fixed: "#ccfbf1", soft: "#99f6e4", mid: "#2dd4bf" },
-        sky:     { p: "#0284c7", dark: "#0369a1", deep: "#0c4a6e", fixed: "#e0f2fe", soft: "#bae6fd", mid: "#38bdf8" },
-        blue:    { p: "#2563eb", dark: "#1d4ed8", deep: "#1e3a8a", fixed: "#dbeafe", soft: "#bfdbfe", mid: "#60a5fa" },
-        violet:  { p: "#7c3aed", dark: "#6d28d9", deep: "#4c1d95", fixed: "#ede9fe", soft: "#ddd6fe", mid: "#a78bfa" },
-        fuchsia: { p: "#c026d3", dark: "#a21caf", deep: "#701a75", fixed: "#fae8ff", soft: "#f5d0fe", mid: "#e879f9" },
-        pink:    { p: "#db2777", dark: "#be185d", deep: "#831843", fixed: "#fce7f3", soft: "#fbcfe8", mid: "#f472b6" },
+        red:    { p: "#dc2626", dark: "#b91c1c", deep: "#7f1d1d", fixed: "#fee2e2", soft: "#fecaca", mid: "#f87171" },
+        orange: { p: "#c2410c", dark: "#9a3412", deep: "#7c2d12", fixed: "#ffedd5", soft: "#fed7aa", mid: "#f97316" },
+        green:  { p: "#15803d", dark: "#166534", deep: "#14532d", fixed: "#dcfce7", soft: "#bbf7d0", mid: "#22c55e" },
+        blue:   { p: "#2563eb", dark: "#1d4ed8", deep: "#1e3a8a", fixed: "#dbeafe", soft: "#bfdbfe", mid: "#60a5fa" },
+        violet: { p: "#7c3aed", dark: "#6d28d9", deep: "#4c1d95", fixed: "#ede9fe", soft: "#ddd6fe", mid: "#a78bfa" },
       };
       var KEY = "contaapp:lastTheme";
       var last = null;
@@ -193,6 +190,10 @@
       </div>
       <div id="drawer-list" class="flex-1 overflow-y-auto p-3 space-y-2"></div>
       <div class="p-4 border-t border-outline-variant/30">
+        <div class="kind-toggle mb-2" role="radiogroup" aria-label="Tipo di contatore">
+          <label><input type="radio" name="drawer-kind" value="simple" checked><span>Semplice</span></label>
+          <label><input type="radio" name="drawer-kind" value="list"><span>Lista (es. Amici)</span></label>
+        </div>
         <div class="flex gap-2">
           <input type="text" id="drawer-new-name" placeholder="Nuovo contatore" maxlength="40"
             class="flex-1 rounded-xl border border-outline-variant px-3 py-2 bg-surface-container-low text-on-surface focus:outline-none focus:border-primary">

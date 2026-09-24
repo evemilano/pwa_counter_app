@@ -15,7 +15,11 @@ export async function renderSettings(root) {
     <section class="mt-4">
       <h3 class="text-label-caps uppercase tracking-widest text-on-surface-variant mb-2">Contatori</h3>
       <div id="counter-list" class="space-y-2"></div>
-      <div class="flex gap-2 mt-3">
+      <div class="kind-toggle mt-3" role="radiogroup" aria-label="Tipo di contatore">
+        <label><input type="radio" name="new-kind" value="simple" checked><span>Semplice</span></label>
+        <label><input type="radio" name="new-kind" value="list"><span>Lista (es. Amici)</span></label>
+      </div>
+      <div class="flex gap-2 mt-2">
         <input type="text" id="new-name" placeholder="Nuovo contatore" maxlength="40" autocomplete="off"
           class="flex-1 rounded-xl border border-outline-variant px-3 py-2.5 bg-surface-container-lowest text-on-surface focus:outline-none focus:border-primary">
         <button type="button" id="btn-add"
@@ -118,7 +122,11 @@ export async function renderSettings(root) {
     </p>
   `;
 
-  renderCounterList(root, counters, activeId);
+  const itemCounts = new Map();
+  for (const c of counters) {
+    if (db.isList(c)) itemCounts.set(c.id, (await db.listItems(c)).length);
+  }
+  renderCounterList(root, counters, activeId, itemCounts);
 
   root.querySelector("#btn-add").addEventListener("click", () => doAdd(root));
   root.querySelector("#new-name").addEventListener("keydown", (e) => {
@@ -175,7 +183,7 @@ export async function renderSettings(root) {
   });
 }
 
-function renderCounterList(root, counters, activeId) {
+function renderCounterList(root, counters, activeId, itemCounts) {
   const list = root.querySelector("#counter-list");
   if (counters.length === 0) {
     list.innerHTML = `<div class="text-on-surface-variant text-sm text-center py-6 bg-surface-container-low rounded-xl">Nessun contatore. Aggiungine uno qui sotto.</div>`;
@@ -186,6 +194,13 @@ function renderCounterList(root, counters, activeId) {
     const row = document.createElement("div");
     row.className = "bg-surface-container-lowest border border-outline-variant/30 rounded-xl p-3";
     const isActive = c.id === activeId;
+    const n = itemCounts.get(c.id) ?? 0;
+    // Target, prezzo e baseline hanno senso solo per i contatori semplici.
+    const options = db.isList(c) ? `
+      <div class="flex items-center gap-2 mt-2 pl-6 text-sm text-on-surface-variant">
+        <span class="material-symbols-outlined" style="font-size:18px">format_list_bulleted</span>
+        Lista · ${n} ${n === 1 ? "voce" : "voci"} · gestiscile dalla Dashboard
+      </div>` : simpleOptionsHtml(c);
     row.innerHTML = `
       <div class="flex items-center gap-3">
         <span class="w-3 h-3 rounded-full flex-shrink-0" style="background:${c.color}"></span>
@@ -196,6 +211,15 @@ function renderCounterList(root, counters, activeId) {
           <span class="material-symbols-outlined" style="font-size:20px">delete</span>
         </button>
       </div>
+      ${options}
+    `;
+    list.appendChild(row);
+  }
+  wireCounterList(list, counters);
+}
+
+function simpleOptionsHtml(c) {
+  return `
       <div class="flex items-center gap-2 mt-2 pl-6">
         <span class="material-symbols-outlined text-on-surface-variant" style="font-size:18px">flag</span>
         <label class="text-sm text-on-surface-variant">Target giornaliero:</label>
@@ -217,10 +241,10 @@ function renderCounterList(root, counters, activeId) {
           class="w-20 bg-surface-container-low border border-outline-variant rounded-lg px-2 py-1 text-on-surface text-sm focus:outline-none focus:border-primary"
           value="${Number(c.baselineOverride) || 0}" data-baseline="${c.id}">
         <span class="text-xs text-on-surface-variant">sig/giorno</span>
-      </div>
-    `;
-    list.appendChild(row);
-  }
+      </div>`;
+}
+
+function wireCounterList(list, counters) {
 
   list.querySelectorAll("[data-rename]").forEach((input) => {
     const id = Number(input.dataset.rename);
@@ -271,10 +295,11 @@ function renderCounterList(root, counters, activeId) {
     const id = Number(btn.dataset.delete);
     btn.addEventListener("click", async () => {
       const c = counters.find((c) => c.id === id);
-      const tapCount = await db.countTapsInRange(id, 0, Number.MAX_SAFE_INTEGER);
+      const tapCount = await db.countTapsForInRange(c, 0, Number.MAX_SAFE_INTEGER);
+      const what = db.isList(c) ? `la lista "${c.name}" con tutte le sue voci` : `"${c.name}"`;
       const msg = tapCount > 0
-        ? `Eliminare "${c.name}" e i suoi ${tapCount} tap?\nNon recuperabile.`
-        : `Eliminare "${c.name}"?`;
+        ? `Eliminare ${what} e i ${tapCount} tap?\nNon recuperabile.`
+        : `Eliminare ${what}?`;
       if (!confirm(msg)) return;
       await db.deleteCounter(id);
       if (db.getLastCounterId() === id) db.setLastCounterId(null);
@@ -368,8 +393,9 @@ async function doAdd(root) {
   const input = root.querySelector("#new-name");
   const v = input.value.trim();
   if (!v) { input.focus(); return; }
+  const kind = root.querySelector('input[name="new-kind"]:checked')?.value || "simple";
   try {
-    const c = await db.addCounter(v);
+    const c = await db.addCounter(v, undefined, 0, { kind });
     if (!db.getLastCounterId()) db.setLastCounterId(c.id);
     input.value = "";
     toast(`Creato: ${c.name}`);
@@ -440,10 +466,10 @@ async function doImport(file) {
 }
 
 async function findDuplicateGroups() {
-  const counters = await db.listCounters();
+  const counters = await db.listAllCounters();
   const byName = new Map();
   for (const c of counters) {
-    const k = (c.name || "").trim().toLowerCase();
+    const k = db.nameKey(c);
     if (!k) continue;
     if (!byName.has(k)) byName.set(k, []);
     byName.get(k).push(c);
@@ -453,7 +479,7 @@ async function findDuplicateGroups() {
     if (arr.length < 2) continue;
     const withCounts = await Promise.all(arr.map(async (c) => ({
       c,
-      taps: await db.countTapsInRange(c.id, 0, Number.MAX_SAFE_INTEGER),
+      taps: await db.countTapsForInRange(c, 0, Number.MAX_SAFE_INTEGER),
     })));
     withCounts.sort((a, b) => {
       if (b.taps !== a.taps) return b.taps - a.taps;

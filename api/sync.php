@@ -119,6 +119,7 @@ if ($method === 'PUT' || $method === 'POST') {
     // deletedAt = now con updatedAt futuristico così l'LWW dei client non li
     // resuscita al prossimo pull.
     $data = is_array($payload['data']) ? $payload['data'] : [];
+    $data = keepCounterKinds($data, $current['data']);
     $data = dedupCountersByName($data);
     $payload['data'] = $data;
 
@@ -130,6 +131,28 @@ if ($method === 'PUT' || $method === 'POST') {
     writeState($dataFile, $DATA_PREFIX, $new);
     echo json_encode(['ok' => true, 'version' => $new['version'], 'updatedAt' => $new['updatedAt']]);
     exit;
+}
+
+// Un client pre-v5 non conosce kind/parentUid e li omette dal payload: senza
+// questo, le voci delle liste diventerebbero contatori di primo livello (e la
+// dedup per nome le fonderebbe con eventuali omonimi).
+function keepCounterKinds(array $data, $current): array {
+    if (!isset($data['counters']) || !is_array($data['counters'])) return $data;
+    if (!is_array($current) || !isset($current['counters']) || !is_array($current['counters'])) return $data;
+    $known = [];
+    foreach ($current['counters'] as $c) {
+        if (isset($c['uid'])) $known[(string)$c['uid']] = $c;
+    }
+    foreach ($data['counters'] as $i => $c) {
+        $prev = $known[(string)($c['uid'] ?? '')] ?? null;
+        if ($prev === null) continue;
+        foreach (['kind', 'parentUid'] as $field) {
+            if (!array_key_exists($field, $c) && array_key_exists($field, $prev)) {
+                $data['counters'][$i][$field] = $prev[$field];
+            }
+        }
+    }
+    return $data;
 }
 
 function dedupCountersByName(array $data): array {
@@ -155,8 +178,10 @@ function dedupCountersByName(array $data): array {
     $groups = [];
     foreach ($counters as $i => $c) {
         if (!empty($c['deletedAt'])) continue;
-        $k = strtolower(trim((string)($c['name'] ?? '')));
-        if ($k === '') continue;
+        $name = strtolower(trim((string)($c['name'] ?? '')));
+        if ($name === '') continue;
+        // Le voci di una lista (parentUid) sono uniche solo dentro la lista.
+        $k = (string)($c['parentUid'] ?? '') . "\0" . $name;
         if (!isset($groups[$k])) $groups[$k] = [];
         $groups[$k][] = $i;
     }
@@ -179,7 +204,17 @@ function dedupCountersByName(array $data): array {
             $counters[$idx]['deletedAt'] = $tsCursor;
             $counters[$idx]['updatedAt'] = $tsCursor;
             $tsCursor++;
-            error_log("[sync.php dedup] collapsed alive duplicate name='" . $k . "' uid=" . $dupUid . " → canonical=" . $canonicalUid);
+            error_log("[sync.php dedup] collapsed alive duplicate name='" . str_replace("\0", "/", $k) . "' uid=" . $dupUid . " → canonical=" . $canonicalUid);
+            // Sposta le voci di una lista duplicata sotto la lista canonica.
+            if ($canonicalUid && $dupUid) {
+                foreach ($counters as $ci => $child) {
+                    if (($child['parentUid'] ?? null) === $dupUid) {
+                        $counters[$ci]['parentUid'] = $canonicalUid;
+                        $counters[$ci]['updatedAt'] = $tsCursor;
+                        $tsCursor++;
+                    }
+                }
+            }
             // Riassegna i tap del duplicato al canonical (per counterUid).
             if (isset($data['taps']) && is_array($data['taps']) && $canonicalUid && $dupUid) {
                 foreach ($data['taps'] as $ti => $t) {

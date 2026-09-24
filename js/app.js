@@ -87,7 +87,11 @@ async function renderDrawerList() {
     return;
   }
   for (const c of counters) {
-    const today = await db.countTapsInRange(c.id, db.startOfDay(), db.endOfDay());
+    const today = await db.countTapsForInRange(c, db.startOfDay(), db.endOfDay());
+    const items = db.isList(c) ? await db.listItems(c) : null;
+    const sub = items
+      ? `${today} oggi · ${items.length} ${items.length === 1 ? "voce" : "voci"}`
+      : `${today} oggi${c.dailyTarget ? ` · target ${c.dailyTarget}` : ""}`;
     const row = document.createElement("button");
     row.type = "button";
     row.className = "drawer-counter w-full text-left" + (c.id === activeId ? " active" : "");
@@ -95,7 +99,7 @@ async function renderDrawerList() {
       <span class="dot" style="background:${c.color}"></span>
       <span class="meta">
         <span class="name block truncate">${escapeHtml(c.name)}</span>
-        <span class="sub">${today} oggi${c.dailyTarget ? ` · target ${c.dailyTarget}` : ""}</span>
+        <span class="sub">${sub}</span>
       </span>
       <span class="material-symbols-outlined text-on-surface-variant">chevron_right</span>
     `;
@@ -112,8 +116,9 @@ document.getElementById("drawer-add").addEventListener("click", async () => {
   const input = document.getElementById("drawer-new-name");
   const v = input.value.trim();
   if (!v) { input.focus(); return; }
+  const kind = document.querySelector('input[name="drawer-kind"]:checked')?.value || "simple";
   try {
-    const c = await db.addCounter(v);
+    const c = await db.addCounter(v, undefined, 0, { kind });
     db.setLastCounterId(c.id);
     input.value = "";
     await renderDrawerList();
@@ -200,6 +205,12 @@ async function handleShortcut() {
   }
   if (counterId == null || !counters.find((c) => c.id === counterId)) {
     counterId = counters[counters.length - 1].id;
+  }
+  // Su una lista il +1 rapido non sa a quale voce andare: apri la dashboard.
+  if (db.isList(counters.find((c) => c.id === counterId))) {
+    history.replaceState({}, "", location.pathname);
+    toast("Tocca una voce per aggiungere +1");
+    return false;
   }
   try {
     await db.addTap(counterId);

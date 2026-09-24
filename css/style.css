@@ -2,15 +2,15 @@
 
 /* Palette primaria: default rosso, sovrascritta a ogni apertura dallo script in <head> di index.html */
 :root {
-  --primary: var(--primary);
-  --primary-rgb: 232 84 84;
-  --primary-dark: var(--primary-dark);
-  --primary-dark-rgb: 201 56 56;
-  --primary-deep: #8a1818;
-  --primary-fixed: var(--primary-fixed);
-  --primary-fixed-rgb: 253 226 226;
-  --primary-soft: #fad2cf;
-  --primary-mid: #f08585;
+  --primary: #dc2626;
+  --primary-rgb: 220 38 38;
+  --primary-dark: #b91c1c;
+  --primary-dark-rgb: 185 28 28;
+  --primary-deep: #7f1d1d;
+  --primary-fixed: #fee2e2;
+  --primary-fixed-rgb: 254 226 226;
+  --primary-soft: #fecaca;
+  --primary-mid: #f87171;
 }
 
 @font-face {
@@ -360,3 +360,82 @@ body { min-height: 100dvh; }
 .delta-bad { color: #8a1818; }
 .delta-flat { color: #5a4a4a; }
 .stat-card .sub { font-size: 12px; color: #5a4a4a; margin-top: 4px; }
+
+/* Scelta tipo contatore (Semplice / Lista) */
+.kind-toggle {
+  display: flex;
+  background: #f4eaea;
+  border-radius: 9999px;
+  padding: 3px;
+  gap: 2px;
+}
+.kind-toggle label { flex: 1; cursor: pointer; }
+.kind-toggle input { position: absolute; opacity: 0; pointer-events: none; }
+.kind-toggle span {
+  display: block;
+  text-align: center;
+  padding: 6px 10px;
+  border-radius: 9999px;
+  font-size: 13px;
+  font-weight: 500;
+  color: #5a4a4a;
+  transition: background 150ms, color 150ms;
+}
+.kind-toggle input:checked + span {
+  background: white;
+  color: var(--primary-dark);
+  font-weight: 700;
+  box-shadow: 0 1px 4px rgba(0,0,0,0.08);
+}
+.kind-toggle input:focus-visible + span { outline: 2px solid var(--primary); }
+
+/* Lista voci (contatore di tipo "list", es. Amici) */
+.item-row {
+  width: 100%;
+  display: flex; align-items: center; gap: 12px;
+  background: white;
+  border: 1px solid rgba(216, 196, 196, 0.4);
+  border-radius: 14px;
+  padding: 10px 14px;
+  text-align: left;
+  transition: transform 80ms ease, background 120ms, border-color 150ms;
+}
+button.item-row:active { transform: scale(0.98); background: var(--primary-fixed); }
+.item-row .avatar {
+  width: 42px; height: 42px;
+  border-radius: 9999px;
+  color: white;
+  font-weight: 700;
+  font-size: 17px;
+  display: flex; align-items: center; justify-content: center;
+  flex: 0 0 auto;
+  text-transform: uppercase;
+}
+.item-row .meta { flex: 1; min-width: 0; }
+.item-row .name { font-weight: 600; color: #1a1c1c; font-size: 16px; }
+.item-row .sub { font-size: 12px; color: #5a4a4a; }
+.item-row .count {
+  font-family: Montserrat, system-ui, sans-serif;
+  font-weight: 800;
+  font-size: 26px;
+  color: var(--primary-dark);
+  font-variant-numeric: tabular-nums;
+  min-width: 2ch;
+  text-align: right;
+}
+.item-row .rank { width: 1.5ch; font-size: 12px; font-weight: 700; color: #8a7575; text-align: right; flex: 0 0 auto; }
+.item-row.pop { animation: pop 220ms cubic-bezier(0.2, 0.8, 0.2, 1); border-color: var(--primary); }
+.item-row.editing { padding: 8px 10px; }
+.item-row .rename {
+  flex: 1; min-width: 0;
+  border: 1px solid #d8c4c4;
+  border-radius: 10px;
+  padding: 8px 10px;
+  background: #fbf4f4;
+  color: #1a1c1c;
+  font-size: 16px;
+  font-weight: 600;
+}
+.item-row .rename:focus { outline: none; border-color: var(--primary); }
+.item-row .del { color: #8a7575; padding: 8px; border-radius: 8px; }
+.item-row .del:active { color: #8a1818; background: #ffd5d2; }

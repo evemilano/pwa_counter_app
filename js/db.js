@@ -1,6 +1,6 @@
 import Dexie from "https://esm.sh/dexie@4.0.10";
 
-export const SCHEMA_VERSION = 4;
+export const SCHEMA_VERSION = 5;
 const PALETTE = ["#e85454", "#f59e0b", "#10b981", "#06b6d4", "#6366f1", "#a855f7", "#ec4899", "#84cc16"];
 
 export const db = new Dexie("contaapp");
@@ -41,6 +41,34 @@ db.version(4).stores({
   });
 });
 
+// Tipi di contatore:
+// - "simple": un unico contatore con il bottone +1 (default, anche per i record pre-v5);
+// - "list":   contenitore di voci (es. "Amici"); non ha tap propri;
+// - "item":   voce di una lista, con parentUid = uid della lista. È un counter a
+//             tutti gli effetti (tap, soft delete, LWW, sync), ma non compare
+//             tra i contatori di primo livello.
+db.version(5).stores({
+  counters: "++id, uid, name, createdAt, updatedAt",
+  taps: "++id, uid, counterId, timestamp, updatedAt, [counterId+timestamp]",
+}).upgrade(async (tx) => {
+  await tx.table("counters").toCollection().modify((c) => {
+    if (c.kind === undefined) c.kind = "simple";
+    if (c.parentUid === undefined) c.parentUid = null;
+  });
+});
+
+export function isList(c) {
+  return c?.kind === "list";
+}
+
+// Chiave di deduplica per nome: le voci sono uniche solo dentro la propria
+// lista, quindi "Marco" in "Amici" non collide con un contatore "Marco".
+export function nameKey(c) {
+  const name = (c?.name || "").trim().toLowerCase();
+  if (!name) return "";
+  return `${c.parentUid || ""}\u0000${name}`;
+}
+
 function newUid() {
   if (crypto && typeof crypto.randomUUID === "function") return crypto.randomUUID();
   return "u-" + Date.now().toString(36) + "-" + Math.random().toString(36).slice(2, 10);
@@ -54,9 +82,22 @@ export function pickColor(existingCount) {
   return PALETTE[existingCount % PALETTE.length];
 }
 
+// Solo contatori di primo livello: le voci delle liste sono escluse.
 export async function listCounters() {
   const all = await db.counters.orderBy("createdAt").toArray();
+  return all.filter((c) => alive(c) && !c.parentUid);
+}
+
+// Tutti i counter vivi, voci delle liste incluse.
+export async function listAllCounters() {
+  const all = await db.counters.orderBy("createdAt").toArray();
   return all.filter(alive);
+}
+
+export async function listItems(parent) {
+  if (!parent?.uid) return [];
+  const all = await db.counters.orderBy("createdAt").toArray();
+  return all.filter((c) => alive(c) && c.parentUid === parent.uid);
 }
 
 export async function getCounter(id) {
@@ -64,13 +105,15 @@ export async function getCounter(id) {
   return alive(c) ? c : undefined;
 }
 
-export async function addCounter(name, color, dailyTarget = 0) {
-  const aliveCounters = await listCounters();
+export async function addCounter(name, color, dailyTarget = 0, { kind = "simple", parentUid = null } = {}) {
+  const aliveCounters = parentUid
+    ? (await listAllCounters()).filter((c) => c.parentUid === parentUid)
+    : await listCounters();
   const trimmed = name.trim();
-  const key = trimmed.toLowerCase();
-  const existing = aliveCounters.find((c) => (c.name || "").trim().toLowerCase() === key);
+  const key = nameKey({ name: trimmed, parentUid });
+  const existing = aliveCounters.find((c) => nameKey(c) === key);
   if (existing) {
-    const err = new Error(`Esiste già un contatore "${existing.name}"`);
+    const err = new Error(`Esiste già ${parentUid ? "una voce" : "un contatore"} "${existing.name}"`);
     err.code = "DUPLICATE_NAME";
     err.existing = existing;
     throw err;
@@ -83,6 +126,8 @@ export async function addCounter(name, color, dailyTarget = 0) {
     dailyTarget: Number(dailyTarget) || 0,
     pricePerCig: 0,
     baselineOverride: 0,
+    kind,
+    parentUid,
     createdAt: now,
     updatedAt: now,
     deletedAt: null,
@@ -91,6 +136,53 @@ export async function addCounter(name, color, dailyTarget = 0) {
   return c;
 }
 
+export async function addItem(parent, name) {
+  const items = await listItems(parent);
+  return addCounter(name, pickColor(items.length), 0, { kind: "item", parentUid: parent.uid });
+}
+
+// Id dei counter che contengono i tap di `c`: per una lista sono le sue voci.
+async function tapCounterIds(c) {
+  if (!isList(c)) return [c.id];
+  return (await listItems(c)).map((i) => i.id);
+}
+
+export async function getAllTapsFor(c) {
+  const ids = await tapCounterIds(c);
+  const arrs = await Promise.all(ids.map((id) => getAllTaps(id)));
+  return arrs.flat().sort((a, b) => a.timestamp - b.timestamp);
+}
+
+export async function getTapsForInRange(c, from, to) {
+  const ids = await tapCounterIds(c);
+  const arrs = await Promise.all(ids.map((id) => getTapsInRange(id, from, to)));
+  return arrs.flat();
+}
+
+export async function countTapsForInRange(c, from, to) {
+  return (await getTapsForInRange(c, from, to)).length;
+}
+
+export async function getLatestTapFor(c) {
+  const ids = await tapCounterIds(c);
+  const latest = await Promise.all(ids.map((id) => getLatestTap(id)));
+  return latest.filter(Boolean).sort((a, b) => b.timestamp - a.timestamp)[0] || null;
+}
+
+export async function removeLatestTapFor(c) {
+  const latest = await getLatestTapFor(c);
+  if (!latest) return null;
+  await deleteTap(latest.id);
+  return latest;
+}
+
+// Sposta le voci di una lista sotto un'altra (merge/dedup di liste duplicate o
+// allineamento dell'uid al primo sync). updatedAt esplicito: la modifica deve
+// vincere l'LWW sugli altri device.
+async function reparentItems(fromUid, toUid, ts) {
+  if (!fromUid || !toUid || fromUid === toUid) return 0;
+  return db.counters.filter((c) => c.parentUid === fromUid).modify({ parentUid: toUid, updatedAt: ts });
+}
 // Bug-fix: edit on a tombstoned counter would bump updatedAt without clearing
 // deletedAt, ma il fatto che updatedAt > deletedAt remoto basta a resuscitarlo
 // al prossimo LWW pull. Per ogni edit, se il record è tombstone esci subito e
@@ -132,13 +224,18 @@ export async function setBaselineOverride(id, value) {
 export async function deleteCounter(id) {
   const now = Date.now();
   await db.transaction("rw", db.counters, db.taps, async () => {
-    const taps = await db.taps.where("counterId").equals(id).toArray();
-    for (const t of taps) {
-      if (!t.deletedAt) {
-        await db.taps.update(t.id, { deletedAt: now, updatedAt: now });
+    const c = await db.counters.get(id);
+    // Eliminare una lista elimina anche tutte le sue voci (e i loro tap).
+    const children = c?.uid ? await db.counters.filter((x) => x.parentUid === c.uid && !x.deletedAt).toArray() : [];
+    for (const cid of [id, ...children.map((x) => x.id)]) {
+      const taps = await db.taps.where("counterId").equals(cid).toArray();
+      for (const t of taps) {
+        if (!t.deletedAt) {
+          await db.taps.update(t.id, { deletedAt: now, updatedAt: now });
+        }
       }
+      await db.counters.update(cid, { deletedAt: now, updatedAt: now });
     }
-    await db.counters.update(id, { deletedAt: now, updatedAt: now });
   });
 }
 
@@ -224,6 +321,7 @@ export async function mergeCounters(canonicalId, duplicateIds) {
       if (!dup.deletedAt) {
         await db.counters.update(dupId, { deletedAt: now, updatedAt: now });
       }
+      await reparentItems(dup.uid, canonical.uid, now);
       mergedCount++;
     }
     if (mergedCount > 0) {
@@ -321,6 +419,8 @@ export async function exportAll({ includeSyncCredentials = true } = {}) {
     dailyTarget: Number(c.dailyTarget) || 0,
     pricePerCig: Number(c.pricePerCig) || 0,
     baselineOverride: Number(c.baselineOverride) || 0,
+    kind: c.kind || "simple",
+    parentUid: c.parentUid || null,
     createdAt: c.createdAt,
     updatedAt: c.updatedAt || c.createdAt,
     deletedAt: c.deletedAt ?? null,
@@ -360,10 +460,20 @@ function normalizeCounter(c) {
     dailyTarget: Number(c.dailyTarget) || 0,
     pricePerCig: Number(c.pricePerCig) || 0,
     baselineOverride: Number(c.baselineOverride) || 0,
+    // undefined (payload di un client pre-v5) = campo assente: in merge si
+    // conserva il valore locale invece di azzerarlo.
+    kind: c.kind === undefined ? undefined : (c.kind || "simple"),
+    parentUid: c.parentUid === undefined ? undefined : (c.parentUid || null),
     createdAt: Number(c.createdAt) || Date.now(),
     updatedAt: Number(c.updatedAt) || Number(c.createdAt) || Date.now(),
     deletedAt: c.deletedAt ? Number(c.deletedAt) : null,
   };
+}
+
+function withKindDefaults(c) {
+  if (c.kind === undefined) c.kind = "simple";
+  if (c.parentUid === undefined) c.parentUid = null;
+  return c;
 }
 
 function normalizeTap(t, counterUid) {
@@ -406,7 +516,7 @@ export async function importAll(data, mode = "merge", options = {}) {
 
       const uidToId = new Map();
       for (const raw of data.counters) {
-        const norm = normalizeCounter(raw);
+        const norm = withKindDefaults(normalizeCounter(raw));
         const id = await db.counters.add(norm);
         uidToId.set(norm.uid, id);
       }
@@ -441,13 +551,18 @@ export async function importAll(data, mode = "merge", options = {}) {
     // per ogni gruppo di counter remoti con stesso nome (case-insensitive, alive),
     // e marca gli altri come tombstone. Il canonical è quello con createdAt minore
     // (record "originale") con tiebreaker sul uid lessicale.
+    // Un payload di un client pre-v5 non ha parentUid: per la chiave di dedup
+    // usa quello locale, altrimenti una voce "Marco" collasserebbe su un
+    // contatore "Marco" di primo livello.
+    const remoteKey = (r) => nameKey(r.parentUid === undefined ? { ...r, parentUid: byUid.get(r.uid)?.parentUid } : r);
+
     let nameCanonicalUid = null;
     if (dedupByName) {
       nameCanonicalUid = new Map();
       const remoteAliveByName = new Map();
       for (const r of data.counters) {
         if (r.deletedAt) continue;
-        const k = (r.name || "").trim().toLowerCase();
+        const k = remoteKey(r);
         if (!k) continue;
         if (!remoteAliveByName.has(k)) remoteAliveByName.set(k, []);
         remoteAliveByName.get(k).push(r);
@@ -467,7 +582,7 @@ export async function importAll(data, mode = "merge", options = {}) {
       for (const c of localCounters) {
         if (c.deletedAt) continue;
         if (remoteUids.has(c.uid)) continue;
-        const k = (c.name || "").trim().toLowerCase();
+        const k = nameKey(c);
         if (!k) continue;
         // Allinea solo al canonical remoto del gruppo, non a uno dei duplicati
         if (!aliveByName.has(k)) aliveByName.set(k, []);
@@ -498,7 +613,7 @@ export async function importAll(data, mode = "merge", options = {}) {
       // (non è il canonical del suo gruppo), forziamo deletedAt così non viene
       // né allineato né aggiunto come alive.
       if (dedupByName && !norm.deletedAt) {
-        const k = (norm.name || "").trim().toLowerCase();
+        const k = remoteKey(norm);
         const canonicalUid = k ? nameCanonicalUid.get(k) : null;
         if (canonicalUid && canonicalUid !== norm.uid) {
           norm.deletedAt = dedupNow;
@@ -509,16 +624,18 @@ export async function importAll(data, mode = "merge", options = {}) {
       }
 
       if (!local && dedupByName && !norm.deletedAt) {
-        const k = (norm.name || "").trim().toLowerCase();
+        const k = nameKey(norm);
         const candidates = k ? aliveByName.get(k) : null;
         if (candidates && candidates.length > 0) {
           const aligned = candidates.shift();
           if (candidates.length === 0) aliveByName.delete(k);
           const remoteNewer = norm.updatedAt > (aligned.updatedAt || 0);
           const patch = remoteNewer
-            ? { uid: norm.uid, name: norm.name, color: norm.color, dailyTarget: norm.dailyTarget, pricePerCig: norm.pricePerCig, baselineOverride: norm.baselineOverride, updatedAt: norm.updatedAt, deletedAt: norm.deletedAt }
+            ? { uid: norm.uid, name: norm.name, color: norm.color, dailyTarget: norm.dailyTarget, pricePerCig: norm.pricePerCig, baselineOverride: norm.baselineOverride, kind: norm.kind ?? aligned.kind, parentUid: norm.parentUid ?? aligned.parentUid, updatedAt: norm.updatedAt, deletedAt: norm.deletedAt }
             : { uid: norm.uid };
           await db.counters.update(aligned.id, patch);
+          // Le voci locali puntano ancora al vecchio uid della lista.
+          await reparentItems(aligned.uid, norm.uid, dedupNow);
           const merged = { ...aligned, ...patch };
           byUid.set(norm.uid, merged);
           countersAligned++;
@@ -528,6 +645,7 @@ export async function importAll(data, mode = "merge", options = {}) {
       }
 
       if (!local) {
+        withKindDefaults(norm);
         const id = await db.counters.add(norm);
         byUid.set(norm.uid, { ...norm, id });
         countersAdded++;
@@ -539,10 +657,12 @@ export async function importAll(data, mode = "merge", options = {}) {
           dailyTarget: norm.dailyTarget,
           pricePerCig: norm.pricePerCig,
           baselineOverride: norm.baselineOverride,
+          kind: norm.kind ?? local.kind ?? "simple",
+          parentUid: norm.parentUid ?? local.parentUid ?? null,
           updatedAt: norm.updatedAt,
           deletedAt: norm.deletedAt,
         });
-        byUid.set(norm.uid, { ...local, ...norm });
+        byUid.set(norm.uid, { ...local, ...norm, kind: norm.kind ?? local.kind, parentUid: norm.parentUid ?? local.parentUid });
         countersUpdated++;
       }
     }
@@ -593,7 +713,7 @@ export async function importAll(data, mode = "merge", options = {}) {
     const aliveAfterByName = new Map();
     for (const c of allCountersAfter) {
       if (c.deletedAt) continue;
-      const k = (c.name || "").trim().toLowerCase();
+      const k = nameKey(c);
       if (!k) continue;
       if (!aliveAfterByName.has(k)) aliveAfterByName.set(k, []);
       aliveAfterByName.get(k).push(c);
@@ -627,6 +747,7 @@ export async function importAll(data, mode = "merge", options = {}) {
           }
         }
         await db.counters.update(dup.id, { deletedAt: collapseTs, updatedAt: collapseTs });
+        await reparentItems(dup.uid, canonical.uid, collapseTs);
         countersOrphansCollapsed++;
         collapseTs++;
         console.debug(`[importAll] orphan collapse "${dup.name}" uid ${dup.uid} → canonical ${canonical.uid}`);

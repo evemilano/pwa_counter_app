@@ -13,9 +13,11 @@ const PERIODS = [
 
 const state = {
   period: "30d",
+  // Liste: voce selezionata nel filtro, per contatore (null = tutte le voci).
+  itemByCounter: {},
 };
 
-let charts = { trend: null, heatmap: null, hourly: null, weekday: null, saved: null };
+let charts = { trend: null, heatmap: null, hourly: null, weekday: null, saved: null, ranking: null };
 let tapsCache = { counterId: null, taps: null, fetchedAt: 0 };
 const CACHE_TTL = 15_000;
 
@@ -77,6 +79,7 @@ export async function renderStats(root) {
     db.setLastCounterId(activeId);
   }
   const active = counters.find((c) => c.id === activeId);
+  if (db.isList(active)) return renderListStats(root, active);
 
   root.innerHTML = buildSkeleton(active);
 
@@ -566,7 +569,7 @@ const BASE_CHART = {
   parentHeightOffset: 0,
 };
 
-function drawTrend(el, slice, ma7Slice, ma30Slice, target) {
+function drawTrend(el, slice, ma7Slice, ma30Slice, target, unit = "sig") {
   if (charts.trend) { try { charts.trend.destroy(); } catch {} charts.trend = null; }
   if (!el || !el.isConnected) return;
 
@@ -629,7 +632,7 @@ function drawTrend(el, slice, ma7Slice, ma30Slice, target) {
       shared: true,
       theme: "light",
       x: { format: "d MMM yyyy" },
-      y: { formatter: (v) => v == null ? "—" : `${Math.round(v * 10) / 10} sig` },
+      y: { formatter: (v) => v == null ? "—" : `${Math.round(v * 10) / 10} ${unit}` },
     },
     annotations: target > 0 ? {
       yaxis: [{
@@ -661,7 +664,7 @@ function drawTrend(el, slice, ma7Slice, ma30Slice, target) {
   });
 }
 
-function drawHeatmap(el, series, target, baselineValue) {
+function drawHeatmap(el, series, target, baselineValue, unit = "sig") {
   if (charts.heatmap) { try { charts.heatmap.destroy(); } catch {} charts.heatmap = null; }
   if (!el || !el.isConnected) return;
 
@@ -723,7 +726,7 @@ function drawHeatmap(el, series, target, baselineValue) {
     tooltip: {
       theme: "light",
       x: { show: false },
-      y: { formatter: (v) => v == null ? "—" : `${v} sig` },
+      y: { formatter: (v) => v == null ? "—" : `${v} ${unit}` },
     },
   };
 
@@ -734,13 +737,13 @@ function drawHeatmap(el, series, target, baselineValue) {
   });
 }
 
-function drawHourly(el, buckets, peakIdx) {
+function drawHourly(el, buckets, peakIdx, unit = "sig", seriesName = "Sigarette") {
   if (charts.hourly) { try { charts.hourly.destroy(); } catch {} charts.hourly = null; }
   if (!el || !el.isConnected) return;
   const colors = buckets.map((_, i) => i === peakIdx ? themeColor("deep") : themeColor());
   const opts = {
     chart: { type: "bar", height: 180, ...BASE_CHART },
-    series: [{ name: "Sigarette", data: buckets }],
+    series: [{ name: seriesName, data: buckets }],
     plotOptions: {
       bar: {
         columnWidth: "70%",
@@ -762,7 +765,7 @@ function drawHourly(el, buckets, peakIdx) {
     yaxis: { labels: { formatter: (v) => Math.round(v), style: { fontSize: "10px" } }, tickAmount: 3 },
     tooltip: {
       theme: "light",
-      y: { formatter: (v) => `${v} sig` },
+      y: { formatter: (v) => `${v} ${unit}` },
       x: { formatter: (v) => `${v}:00–${v}:59` },
     },
   };
@@ -773,13 +776,13 @@ function drawHourly(el, buckets, peakIdx) {
   });
 }
 
-function drawWeekday(el, buckets, peakIdx) {
+function drawWeekday(el, buckets, peakIdx, unit = "sig", seriesName = "Sigarette") {
   if (charts.weekday) { try { charts.weekday.destroy(); } catch {} charts.weekday = null; }
   if (!el || !el.isConnected) return;
   const colors = buckets.map((_, i) => i === peakIdx ? themeColor("deep") : themeColor());
   const opts = {
     chart: { type: "bar", height: 160, ...BASE_CHART },
-    series: [{ name: "Sigarette", data: buckets }],
+    series: [{ name: seriesName, data: buckets }],
     plotOptions: {
       bar: {
         columnWidth: "55%",
@@ -805,7 +808,7 @@ function drawWeekday(el, buckets, peakIdx) {
       axisTicks: { show: false },
     },
     yaxis: { labels: { formatter: (v) => Math.round(v) }, tickAmount: 3 },
-    tooltip: { theme: "light", y: { formatter: (v) => `${v} sig` } },
+    tooltip: { theme: "light", y: { formatter: (v) => `${v} ${unit}` } },
   };
   requestAnimationFrame(() => {
     if (!el.isConnected) return;
@@ -852,5 +855,330 @@ function drawSaved(el, series, cumSaved) {
     if (!el.isConnected) return;
     charts.saved = new ApexCharts(el, opts);
     charts.saved.render();
+  });
+}
+
+/* ── LISTE (es. Amici) ───────────────────────────────────────
+   Nessun concetto di sigarette/target/risparmio: conta gli incontri, per voce
+   o per l'intera lista, con classifica e "da risentire". */
+
+async function renderListStats(root, active) {
+  const items = await db.listItems(active);
+  if (items.length === 0) {
+    root.innerHTML = `
+      <div class="empty-card mt-12">
+        <div class="w-20 h-20 mx-auto mb-4 rounded-full bg-primary-fixed flex items-center justify-center text-primary">
+          <span class="material-symbols-outlined" style="font-size:48px">group</span>
+        </div>
+        <h2 class="font-display font-bold text-xl mb-2">${escapeHtml(active.name)} è vuota</h2>
+        <p class="text-on-surface-variant text-sm">Aggiungi le voci dalla Dashboard e inizia a toccarle.</p>
+      </div>`;
+    return;
+  }
+  let selectedId = state.itemByCounter[active.id] ?? null;
+  if (selectedId != null && !items.some((i) => i.id === selectedId)) selectedId = null;
+
+  root.innerHTML = `
+    <div class="pt-2 pb-2">
+      <div class="text-on-surface-variant text-sm">Contatore</div>
+      <div class="font-display font-bold text-2xl text-on-surface flex items-center gap-2">
+        <span class="w-3 h-3 rounded-full" style="background:${active.color}"></span>
+        ${escapeHtml(active.name)}
+      </div>
+      <select id="item-filter" aria-label="Filtra per voce"
+        class="mt-2 w-full rounded-xl border border-outline-variant px-3 py-2.5 bg-surface-container-lowest text-on-surface font-semibold focus:outline-none focus:border-primary">
+        <option value="">Tutte le voci (${items.length})</option>
+        ${[...items].sort((a, b) => a.name.localeCompare(b.name, "it", { sensitivity: "base" }))
+          .map((i) => `<option value="${i.id}" ${i.id === selectedId ? "selected" : ""}>${escapeHtml(i.name)}</option>`).join("")}
+      </select>
+    </div>
+
+    <div class="flex justify-center my-3">
+      <div class="period-pill" id="period-pill"></div>
+    </div>
+
+    <div class="grid grid-cols-2 gap-3 mt-1">
+      <div class="stat-card">
+        <span class="material-symbols-outlined text-primary" style="font-size:20px">handshake</span>
+        <div class="label mt-1">Incontri</div>
+        <div class="value" id="l-total">0</div>
+        <div class="sub" id="l-total-sub"></div>
+      </div>
+      <div class="stat-card">
+        <span class="material-symbols-outlined text-primary" style="font-size:20px">date_range</span>
+        <div class="label mt-1">Media a settimana</div>
+        <div class="value" id="l-week">0</div>
+        <div class="sub" id="l-week-sub"></div>
+      </div>
+      <div class="stat-card">
+        <span class="material-symbols-outlined text-primary" style="font-size:20px" id="l-c-icon">group</span>
+        <div class="label mt-1" id="l-c-label">—</div>
+        <div class="value truncate" id="l-c-value">—</div>
+        <div class="sub" id="l-c-sub"></div>
+      </div>
+      <div class="stat-card">
+        <span class="material-symbols-outlined text-primary" style="font-size:20px" id="l-d-icon">star</span>
+        <div class="label mt-1" id="l-d-label">—</div>
+        <div class="value truncate" id="l-d-value">—</div>
+        <div class="sub" id="l-d-sub"></div>
+      </div>
+    </div>
+
+    <section class="bg-surface-container-lowest rounded-2xl p-4 border border-outline-variant/30 mt-4" id="ranking-section">
+      <div class="text-label-caps uppercase tracking-widest text-on-surface-variant mb-2">Classifica</div>
+      <div id="chart-ranking" class="-mx-2"></div>
+    </section>
+
+    <section class="bg-surface-container-lowest rounded-2xl p-4 border border-outline-variant/30 mt-4" id="stale-section">
+      <div class="text-label-caps uppercase tracking-widest text-on-surface-variant mb-2">Da risentire</div>
+      <div id="stale-list" class="space-y-1"></div>
+    </section>
+
+    <section class="bg-surface-container-lowest rounded-2xl p-4 border border-outline-variant/30 mt-4">
+      <div class="text-label-caps uppercase tracking-widest text-on-surface-variant mb-2">Andamento/giorno</div>
+      <div id="chart-trend" class="-mx-2" style="min-height:240px"></div>
+      <div class="text-xs text-on-surface-variant mt-2 flex flex-wrap gap-3 items-center">
+        <span class="flex items-center gap-1"><span class="inline-block w-2 h-2 rounded-full" style="background:var(--primary)"></span>Giornaliero</span>
+        <span class="flex items-center gap-1"><span class="inline-block w-2 h-2 rounded-full" style="background:#10b981"></span>MA 7gg</span>
+        <span class="flex items-center gap-1"><span class="inline-block w-2 h-2 rounded-full" style="background:#6366f1"></span>MA 30gg</span>
+      </div>
+    </section>
+
+    <section class="bg-surface-container-lowest rounded-2xl p-4 border border-outline-variant/30 mt-4">
+      <div class="text-label-caps uppercase tracking-widest text-on-surface-variant mb-2">Calendario · ultimi 12 mesi</div>
+      <div id="chart-heatmap" class="-mx-2" style="min-height:240px"></div>
+    </section>
+
+    <section class="bg-surface-container-lowest rounded-2xl p-4 border border-outline-variant/30 mt-4">
+      <div class="text-label-caps uppercase tracking-widest text-on-surface-variant mb-2">Distribuzione oraria</div>
+      <div id="chart-hourly" class="-mx-2" style="min-height:190px"></div>
+    </section>
+
+    <section class="bg-surface-container-lowest rounded-2xl p-4 border border-outline-variant/30 mt-4">
+      <div class="text-label-caps uppercase tracking-widest text-on-surface-variant mb-2">Distribuzione per giorno settimana</div>
+      <div id="chart-weekday" class="-mx-2" style="min-height:170px"></div>
+    </section>
+
+    <div class="mt-4 bg-primary-fixed/40 rounded-2xl p-4 flex gap-3 items-start">
+      <div class="w-8 h-8 rounded-full bg-surface-container-lowest flex items-center justify-center text-primary flex-shrink-0">
+        <span class="material-symbols-outlined" style="font-size:18px">lightbulb</span>
+      </div>
+      <div>
+        <div class="text-label-caps uppercase tracking-widest text-on-surface-variant mb-1">Insight</div>
+        <div class="text-sm text-on-surface" id="insight-text">—</div>
+      </div>
+    </div>
+  `;
+
+  const pillEl = root.querySelector("#period-pill");
+  for (const p of PERIODS) {
+    const b = document.createElement("button");
+    b.type = "button";
+    b.textContent = p.label;
+    b.className = p.id === state.period ? "active" : "";
+    b.addEventListener("click", () => {
+      if (state.period === p.id) return;
+      state.period = p.id;
+      pillEl.querySelectorAll("button").forEach((btn, i) =>
+        btn.classList.toggle("active", PERIODS[i].id === state.period)
+      );
+      refreshList(root, active, items).catch(console.error);
+    });
+    pillEl.appendChild(b);
+  }
+
+  root.querySelector("#item-filter").addEventListener("change", (e) => {
+    state.itemByCounter[active.id] = e.target.value ? Number(e.target.value) : null;
+    refreshList(root, active, items).catch(console.error);
+    // Il select non deve restare a fuoco: app.js rimanderebbe i re-render.
+    e.target.blur();
+  });
+
+  await refreshList(root, active, items);
+}
+
+async function refreshList(root, active, items) {
+  disposeCharts();
+  const selectedId = state.itemByCounter[active.id] ?? null;
+  const selected = selectedId != null ? items.find((i) => i.id === selectedId) : null;
+  const unit = "incontri";
+
+  // Tap per voce (tutta la storia): servono a classifica, "da risentire" e serie.
+  const perItem = await Promise.all(items.map(async (item) => ({ item, taps: await db.getAllTaps(item.id) })));
+  const allTaps = selected
+    ? perItem.find((p) => p.item.id === selected.id).taps
+    : perItem.flatMap((p) => p.taps).sort((a, b) => a.timestamp - b.timestamp);
+
+  const today = db.startOfDay();
+  const firstDay = sm.firstTapDay(allTaps) ?? today;
+  const historicSeries = sm.buildDailySeries(allTaps, firstDay, today);
+  const { from: rawPeriodFrom, to: periodTo } = sm.slicePeriod(historicSeries, state.period, today);
+  const periodFrom = Math.max(rawPeriodFrom, firstDay);
+  const computeFrom = Math.max(sm.startOfDayPlus(periodFrom, -29), firstDay);
+  const series = sm.buildDailySeries(allTaps, computeFrom, today);
+  const ma7Full = sm.computeMA(series, 7);
+  const ma30Full = sm.computeMA(series, 30);
+  const foundIdx = series.findIndex((r) => r.day >= periodFrom);
+  const sliceStartIdx = foundIdx === -1 ? series.length : foundIdx;
+  const slice = series.slice(sliceStartIdx);
+
+  const inPeriod = (t) => {
+    const d = startOfDayMsLocal(t.timestamp);
+    return d >= periodFrom && d <= periodTo;
+  };
+  const sliceTaps = allTaps.filter(inPeriod);
+  const total = sliceTaps.length;
+  const days = slice.length;
+  const perWeek = days > 0 ? total / days * 7 : 0;
+
+  // Confronto con la finestra precedente di pari durata (solo se interamente osservata).
+  let cmp = { deltaPct: null };
+  const prevTo = sm.startOfDayPlus(periodFrom, -1);
+  const prevFrom = sm.startOfDayPlus(prevTo, -(days - 1));
+  if (state.period !== "all" && prevFrom >= firstDay) {
+    const prevTotal = sm.buildDailySeries(allTaps, prevFrom, prevTo).reduce((a, r) => a + r.n, 0);
+    cmp = sm.compareSums(total, prevTotal);
+  }
+
+  root.querySelector("#l-total").textContent = sm.fmtNum(total);
+  root.querySelector("#l-total-sub").textContent = state.period === "all"
+    ? "totale storico"
+    : cmp.deltaPct != null ? `${cmp.deltaPct > 0 ? "+" : ""}${cmp.deltaPct}% vs precedente` : "";
+  root.querySelector("#l-week").textContent = sm.fmtNum(perWeek, 1);
+  root.querySelector("#l-week-sub").textContent = `su ${days} giorni`;
+
+  const now = Date.now();
+  const ranking = perItem
+    .map((p) => ({ item: p.item, n: p.taps.filter(inPeriod).length, last: p.taps.length ? p.taps[p.taps.length - 1].timestamp : null }))
+    .sort((a, b) => b.n - a.n || (b.last || 0) - (a.last || 0));
+
+  const setCard = (key, icon, label, value, sub) => {
+    root.querySelector(`#l-${key}-icon`).textContent = icon;
+    root.querySelector(`#l-${key}-label`).textContent = label;
+    root.querySelector(`#l-${key}-value`).textContent = value;
+    root.querySelector(`#l-${key}-sub`).textContent = sub;
+  };
+  if (selected) {
+    const last = allTaps.length ? allTaps[allTaps.length - 1].timestamp : null;
+    const activeDays = slice.filter((r) => r.n > 0).length;
+    const rank = ranking.findIndex((r) => r.item.id === selected.id) + 1;
+    setCard("c", "schedule", "Ultimo incontro", last ? daysAgoLabel(last, now) : "mai",
+      last ? new Date(last).toLocaleDateString("it-IT", { day: "numeric", month: "short", year: "numeric" }) : "");
+    setCard("d", "leaderboard", "Posizione", total > 0 ? `#${rank}` : "—",
+      `${activeDays} giorni con incontri`);
+  } else {
+    const seen = ranking.filter((r) => r.n > 0);
+    setCard("c", "group", "Voci viste", `${seen.length}/${items.length}`, "nel periodo");
+    setCard("d", "star", "Più frequente", seen[0] ? seen[0].item.name : "—",
+      seen[0] ? `${seen[0].n} ${seen[0].n === 1 ? "incontro" : "incontri"}` : "");
+  }
+
+  // Classifica + "da risentire": hanno senso solo sull'intera lista.
+  root.querySelector("#ranking-section").classList.toggle("hidden", !!selected);
+  root.querySelector("#stale-section").classList.toggle("hidden", !!selected);
+  if (!selected) {
+    drawRanking(root.querySelector("#chart-ranking"), ranking.filter((r) => r.n > 0).slice(0, 15));
+    const stale = [...ranking].sort((a, b) => (a.last ?? -Infinity) - (b.last ?? -Infinity)).slice(0, 5);
+    root.querySelector("#stale-list").innerHTML = stale.map((r) => `
+      <div class="flex items-center justify-between py-1.5">
+        <span class="flex items-center gap-2 min-w-0">
+          <span class="w-2.5 h-2.5 rounded-full flex-shrink-0" style="background:${r.item.color}"></span>
+          <span class="font-semibold text-on-surface truncate">${escapeHtml(r.item.name)}</span>
+        </span>
+        <span class="text-sm text-on-surface-variant flex-shrink-0">${r.last ? daysAgoLabel(r.last, now) : "mai"}</span>
+      </div>`).join("");
+  }
+
+  const hourBuckets = sm.bucketByHour(sliceTaps);
+  const wdayBuckets = sm.bucketByWeekday(sliceTaps);
+  const peakH = sm.peakHour(hourBuckets);
+  const peakW = sm.peakWeekday(wdayBuckets);
+
+  root.querySelector("#insight-text").textContent = pickListInsight({ selected, ranking, total, cmp, peakW, now });
+
+  drawTrend(root.querySelector("#chart-trend"), slice, ma7Full.slice(sliceStartIdx), ma30Full.slice(sliceStartIdx), 0, unit);
+  drawHeatmap(root.querySelector("#chart-heatmap"), historicSeries, 0, 0, unit);
+  drawHourly(root.querySelector("#chart-hourly"), hourBuckets, peakH.hour, unit, "Incontri");
+  drawWeekday(root.querySelector("#chart-weekday"), wdayBuckets, peakW.wday, unit, "Incontri");
+}
+
+function daysAgoLabel(ts, now) {
+  const days = Math.round((db.startOfDay(new Date(now)) - db.startOfDay(new Date(ts))) / 86_400_000);
+  if (days <= 0) return "oggi";
+  if (days === 1) return "ieri";
+  return `${days} giorni fa`;
+}
+
+function pickListInsight({ selected, ranking, total, cmp, peakW, now }) {
+  const DAY = 86_400_000;
+  if (selected) {
+    const r = ranking.find((x) => x.item.id === selected.id);
+    if (!r?.last) return `Non hai ancora registrato incontri con ${selected.name}.`;
+    const days = Math.floor((now - r.last) / DAY);
+    if (days >= 30) return `Sono passati ${days} giorni dall'ultima volta con ${selected.name}: forse è ora di farsi sentire.`;
+    if (total > 0 && peakW.pct >= 0.3 && peakW.value >= 3) return `Con ${selected.name} ti vedi soprattutto di ${weekdayName(peakW.wday).toLowerCase()}.`;
+    return `${selected.name}: ${total} ${total === 1 ? "incontro" : "incontri"} nel periodo.`;
+  }
+  if (total === 0) return "Nessun incontro registrato in questo periodo.";
+  const forgotten = ranking.filter((r) => r.last && now - r.last >= 30 * DAY)
+    .sort((a, b) => a.last - b.last)[0];
+  if (forgotten) {
+    return `Non senti ${forgotten.item.name} da ${Math.floor((now - forgotten.last) / DAY)} giorni.`;
+  }
+  const top = ranking[0];
+  if (top && top.n > 0 && total >= 5 && top.n / total >= 0.4) {
+    return `${top.item.name} vale il ${Math.round(top.n / total * 100)}% dei tuoi incontri nel periodo.`;
+  }
+  if (cmp.deltaPct != null && Math.abs(cmp.deltaPct) >= 20) {
+    return cmp.deltaPct > 0
+      ? `${cmp.deltaPct}% di incontri in più rispetto al periodo precedente.`
+      : `${Math.abs(cmp.deltaPct)}% di incontri in meno rispetto al periodo precedente.`;
+  }
+  const never = ranking.filter((r) => !r.last);
+  if (never.length) return `${never.length} ${never.length === 1 ? "voce non ha" : "voci non hanno"} ancora nessun incontro.`;
+  return "Continua a registrare: più dati, più la classifica diventa affidabile.";
+}
+
+function drawRanking(el, rows) {
+  if (charts.ranking) { try { charts.ranking.destroy(); } catch {} charts.ranking = null; }
+  if (!el || !el.isConnected) return;
+  if (rows.length === 0) {
+    el.innerHTML = `<div class="text-center text-on-surface-variant text-sm py-8">Nessun incontro nel periodo selezionato.</div>`;
+    return;
+  }
+  const opts = {
+    chart: { type: "bar", height: Math.max(120, rows.length * 34 + 30), ...BASE_CHART },
+    series: [{ name: "Incontri", data: rows.map((r) => r.n) }],
+    plotOptions: {
+      bar: {
+        horizontal: true,
+        barHeight: "70%",
+        borderRadius: 4,
+        borderRadiusApplication: "end",
+        distributed: true,
+        dataLabels: { position: "top" },
+      },
+    },
+    colors: rows.map((r) => r.item.color),
+    legend: { show: false },
+    dataLabels: {
+      enabled: true,
+      offsetX: 18,
+      style: { fontSize: "11px", colors: ["#1a1c1c"], fontWeight: 700 },
+    },
+    grid: { borderColor: "rgba(216,196,196,0.3)", strokeDashArray: 4, padding: { right: 24 } },
+    xaxis: {
+      categories: rows.map((r) => r.item.name),
+      labels: { formatter: (v) => Math.round(v), style: { fontSize: "10px", colors: "#5a4a4a" } },
+      axisBorder: { show: false },
+      axisTicks: { show: false },
+    },
+    yaxis: { labels: { maxWidth: 120, style: { fontSize: "12px", colors: "#1a1c1c", fontWeight: 600 } } },
+    tooltip: { theme: "light", y: { formatter: (v) => `${v} incontri` } },
+  };
+  requestAnimationFrame(() => {
+    if (!el.isConnected) return;
+    charts.ranking = new ApexCharts(el, opts);
+    charts.ranking.render();
   });
 }

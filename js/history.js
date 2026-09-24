@@ -22,8 +22,12 @@ export async function renderHistory(root) {
   }
   const active = counters.find((c) => c.id === activeId);
 
-  const all = await db.getAllTaps(active.id);
+  const all = await db.getAllTapsFor(active);
   all.reverse();
+  // Per le liste ogni riga mostra la voce (es. l'amico) a cui appartiene il tap.
+  const itemsById = db.isList(active)
+    ? new Map((await db.listItems(active)).map((i) => [i.id, i]))
+    : null;
   const groups = groupByDay(all);
 
   const summary = `
@@ -33,7 +37,7 @@ export async function renderHistory(root) {
         <span class="w-3 h-3 rounded-full" style="background:${active.color}"></span>
         ${escapeHtml(active.name)}
       </div>
-      <p class="text-on-surface-variant text-sm">Cronologia di tutti i tap registrati</p>
+      <p class="text-on-surface-variant text-sm">${itemsById ? `Cronologia di tutti i tap delle voci di ${escapeHtml(active.name)}` : "Cronologia di tutti i tap registrati"}</p>
     </div>
   `;
 
@@ -42,12 +46,12 @@ export async function renderHistory(root) {
       ${summary}
       <div class="empty-card mt-8">
         <h4 class="font-bold text-on-surface mb-1">Nulla qui</h4>
-        <p class="text-on-surface-variant text-sm">Vai sulla Dashboard e premi +.</p>
+        <p class="text-on-surface-variant text-sm">${itemsById ? "Vai sulla Dashboard e tocca una voce." : "Vai sulla Dashboard e premi +."}</p>
       </div>`;
     return;
   }
 
-  const sections = buildSectionsHtml(groups);
+  const sections = buildSectionsHtml(groups, itemsById);
 
   root.innerHTML = `
     ${summary}
@@ -57,7 +61,7 @@ export async function renderHistory(root) {
         <span class="material-symbols-outlined" style="font-size:32px">local_fire_department</span>
       </div>
       <h4 class="font-bold text-on-surface">Cronologia</h4>
-      <p class="text-on-surface-variant text-sm mt-1">Ogni tap registrato qui ti aiuta a vedere il tuo ritmo giornaliero.</p>
+      <p class="text-on-surface-variant text-sm mt-1">${itemsById ? "Ogni incontro registrato qui ti aiuta a vedere chi frequenti di più." : "Ogni tap registrato qui ti aiuta a vedere il tuo ritmo giornaliero."}</p>
     </div>
   `;
 
@@ -149,7 +153,7 @@ function groupByDay(taps) {
 // Genera l'intera sezione cronologia. Oggi/Ieri restano espansi in cima;
 // tutto il resto viene annidato in Anno > Mese > Giorno, ogni livello in
 // <details> collassato di default.
-function buildSectionsHtml(groups) {
+function buildSectionsHtml(groups, itemsById) {
   const todayStart = startOfDay(new Date());
   // Calendario e non -86.400.000: il giorno dopo un cambio d'ora legale la
   // sottrazione fissa cade alle 23:00/01:00 e "Ieri" non matcha più nessun
@@ -164,7 +168,7 @@ function buildSectionsHtml(groups) {
     else old.push(g);
   }
 
-  const expandedHtml = expanded.map((g) => expandedSectionHtml(g, todayStart, yStart)).join("");
+  const expandedHtml = expanded.map((g) => expandedSectionHtml(g, todayStart, yStart, itemsById)).join("");
 
   // Raggruppa i giorni vecchi per anno > mese
   const byYear = new Map();
@@ -179,26 +183,29 @@ function buildSectionsHtml(groups) {
 
   const yearsHtml = [...byYear.entries()]
     .sort((a, b) => b[0] - a[0])
-    .map(([year, months]) => yearDetailHtml(year, months))
+    .map(([year, months]) => yearDetailHtml(year, months, itemsById))
     .join("");
 
   return expandedHtml + yearsHtml;
 }
 
-function rowHtml(t, muted) {
+function rowHtml(t, muted, itemsById) {
   const time = formatTime(t.timestamp);
   const edit = toEditValues(t.timestamp);
   const badgeColor = muted ? "muted" : "";
+  const item = itemsById?.get(t.counterId);
+  const label = item ? escapeHtml(item.name) : "Incremento";
+  const badge = item
+    ? `<span style="font-weight:700;font-size:17px;text-transform:uppercase">${escapeHtml([...item.name.trim()][0] || "?")}</span>`
+    : `<span class="material-symbols-outlined" style="font-size:22px">${muted ? "history" : "add_circle"}</span>`;
   return `
     <div class="history-row ${badgeColor}" data-row-tap="${t.id}">
       <div class="history-row-view">
         <div class="flex items-center gap-3 min-w-0">
-          <div class="badge">
-            <span class="material-symbols-outlined" style="font-size:22px">${muted ? "history" : "add_circle"}</span>
-          </div>
+          <div class="badge">${badge}</div>
           <div class="min-w-0">
             <div class="time">${time}</div>
-            <div class="label">Incremento</div>
+            <div class="label truncate">${label}</div>
           </div>
         </div>
         <div class="row-actions">
@@ -226,11 +233,11 @@ function rowHtml(t, muted) {
     </div>`;
 }
 
-function expandedSectionHtml(group, todayStart, yStart) {
+function expandedSectionHtml(group, todayStart, yStart, itemsById) {
   const gStart = startOfDay(group.date);
   const title = gStart === todayStart ? "Oggi" : "Ieri";
   const muted = false;
-  const rows = group.items.map((t) => rowHtml(t, muted)).join("");
+  const rows = group.items.map((t) => rowHtml(t, muted, itemsById)).join("");
   const badgeHtml = `<span class="text-label-caps bg-primary-fixed text-primary px-3 py-1 rounded-full">${group.items.length} tap</span>`;
   return `
     <section class="mt-6">
@@ -243,11 +250,11 @@ function expandedSectionHtml(group, todayStart, yStart) {
   `;
 }
 
-function yearDetailHtml(year, monthsMap) {
+function yearDetailHtml(year, monthsMap, itemsById) {
   const total = [...monthsMap.values()].reduce((acc, days) => acc + days.reduce((a, g) => a + g.items.length, 0), 0);
   const monthsHtml = [...monthsMap.entries()]
     .sort((a, b) => b[0] - a[0])
-    .map(([month, days]) => monthDetailHtml(month, days))
+    .map(([month, days]) => monthDetailHtml(month, days, itemsById))
     .join("");
   return `
     <details class="history-collapse history-collapse--year">
@@ -263,11 +270,11 @@ function yearDetailHtml(year, monthsMap) {
   `;
 }
 
-function monthDetailHtml(month, days) {
+function monthDetailHtml(month, days, itemsById) {
   const total = days.reduce((a, g) => a + g.items.length, 0);
   const daysHtml = days
     .sort((a, b) => b.date - a.date)
-    .map((g) => dayDetailHtml(g))
+    .map((g) => dayDetailHtml(g, itemsById))
     .join("");
   return `
     <details class="history-collapse history-collapse--month">
@@ -283,8 +290,8 @@ function monthDetailHtml(month, days) {
   `;
 }
 
-function dayDetailHtml(group) {
-  const rows = group.items.map((t) => rowHtml(t, true)).join("");
+function dayDetailHtml(group, itemsById) {
+  const rows = group.items.map((t) => rowHtml(t, true, itemsById)).join("");
   const dayNum = group.date.getDate();
   const wdayName = WEEKDAY_SHORT[(group.date.getDay() + 6) % 7];
   return `
