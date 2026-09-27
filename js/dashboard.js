@@ -221,7 +221,8 @@ async function renderListDashboard(root, active) {
     }
     root.querySelector("#list-today").textContent = String(today);
     root.querySelector("#list-summary").textContent = `${week} questa settimana · ${month} questo mese`;
-    btnUndo.classList.toggle("invisible", editing || !rows.some((r) => r.total > 0));
+    // Annulla agisce solo sui tap di oggi, come nel contatore semplice.
+    btnUndo.classList.toggle("invisible", editing || today === 0);
 
     if (rows.length === 0) {
       listEl.innerHTML = `
@@ -313,8 +314,10 @@ async function renderListDashboard(root, active) {
   }
 
   btnUndo.addEventListener("click", async () => {
-    const removed = await db.removeLatestTapFor(active);
-    if (!removed) { toast("Niente da rimuovere"); return; }
+    // Mai cancellare un tap di giorni passati: per quelli c'è lo storico.
+    const removed = await db.getLatestTapFor(active);
+    if (!removed || removed.timestamp < db.startOfDay()) { toast("Niente da annullare oggi"); await refreshList(); return; }
+    await db.deleteTap(removed.id);
     if (navigator.vibrate) navigator.vibrate([8, 30, 8]);
     const item = await db.getCounter(removed.counterId);
     toast(`Annullato${item ? ` · ${item.name}` : ""}`);

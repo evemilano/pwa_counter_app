@@ -256,8 +256,14 @@ async function refresh(root, counter) {
   const firstDay = sm.firstTapDay(taps) ?? today;
   const historicSeries = sm.buildDailySeries(taps, firstDay, today);
 
-  // Baseline su intera storia
-  const baseline = sm.computeBaseline(historicSeries, baselineOverride, target);
+  // Il giorno in corso ha un n parziale: nelle metriche (baseline, MA7 hero,
+  // trend, confronti, risparmi) entrano solo i giorni CONCLUSI, altrimenti al
+  // mattino tutto sembra "in calo". I grafici invece mostrano anche oggi.
+  const isClosed = (r) => r.day < today;
+  const completedHistory = historicSeries.filter(isClosed);
+
+  // Baseline su intera storia (giorni conclusi)
+  const baseline = sm.computeBaseline(completedHistory, baselineOverride, target);
 
   // Periodo selezionato: lo span temporale che l'utente vuole vedere nei grafici.
   // Per dare contesto storico alle MA all'inizio del periodo anticipo l'inizio di
@@ -289,10 +295,12 @@ async function refresh(root, counter) {
   const ma7 = ma7Full;
   const ma30 = ma30Full;
 
-  const lastMA7 = ma7[ma7.length - 1];
+  // MA7 hero = media degli ultimi 7 giorni conclusi (fino a ieri).
+  const closedCount = series.filter(isClosed).length;
+  const lastMA7 = closedCount > 0 ? ma7[closedCount - 1] : null;
 
   // Δ MA7 vs MA7 di 7 giorni prima
-  const prevMA7Idx = ma7.length - 8;
+  const prevMA7Idx = closedCount - 8;
   const prevMA7 = prevMA7Idx >= 0 ? ma7[prevMA7Idx] : null;
   let heroDelta = null, heroDir = "flat";
   if (lastMA7 != null && prevMA7 != null && prevMA7 > 0) {
@@ -302,7 +310,8 @@ async function refresh(root, counter) {
   }
 
   // Trend sul periodo selezionato dalla pillola.
-  const trend = sm.computeTrend(slice, { windowDays: slice.length, baseline: baseline.value || 0 });
+  const completedSlice = slice.filter(isClosed);
+  const trend = sm.computeTrend(completedSlice, { windowDays: completedSlice.length, baseline: baseline.value || 0 });
 
   // Streak — la card dice "da sempre", quindi va sull'intera storia, non sulla
   // series del periodo selezionato (che la troncherebbe alla pillola attiva).
@@ -313,17 +322,19 @@ async function refresh(root, counter) {
   // quindi la comparazione viene saltata. Per gli altri periodi la finestra
   // equivalente prima di `periodFrom` viene costruita direttamente dai tap
   // (così funziona anche per 90d/year, che andavano oltre il buffer).
-  const sliceLen = slice.length;
+  // Si confrontano solo i giorni conclusi del periodo con altrettanti giorni
+  // precedenti: oggi parziale darebbe "-12%" anche a consumo costante.
+  const sliceLen = completedSlice.length;
   let prevTotal = 0;
   let cmp = { direction: "flat", deltaPct: null, deltaAbs: 0 };
   const prevTo = sm.startOfDayPlus(periodFrom, -1);
   const prevFrom = sm.startOfDayPlus(prevTo, -(sliceLen - 1));
   // Confronto solo se la finestra precedente è interamente osservata: misurarsi
   // contro giorni antecedenti al primo tap significa misurarsi contro zeri finti.
-  if (state.period !== "all" && prevFrom >= firstDay) {
+  if (state.period !== "all" && sliceLen > 0 && prevFrom >= firstDay) {
     const prevSlice = sm.buildDailySeries(taps, prevFrom, prevTo);
     prevTotal = prevSlice.reduce((a, r) => a + r.n, 0);
-    cmp = sm.compareSums(totalPeriod, prevTotal);
+    cmp = sm.compareSums(completedSlice.reduce((a, r) => a + r.n, 0), prevTotal);
   }
 
   // Hourly / weekday — sui tap del periodo
@@ -339,11 +350,13 @@ async function refresh(root, counter) {
   // Sigarette evitate: solo giorni CONCLUSI. Oggi ha un n ancora parziale —
   // contarlo darebbe +baseline a mezzanotte per poi calare a ogni tap, cioè una
   // curva cumulativa che scende. Oggi entra nel conteggio stanotte.
+  // Escluso anche il primo giorno: è parziale per definizione (si inizia a
+  // contare a metà giornata), e varrebbe quasi un'intera baseline "evitata".
   // Base = intera storia (non la series estesa, che parte prima del periodo).
-  const completedHistory = historicSeries.slice(0, -1);
-  const completedSlice = slice.slice(0, -1);
-  const totalSaved = baseline.value ? sm.savedCigarettesTotal(completedHistory, baseline.value) : 0;
-  const savedInPeriod = baseline.value ? sm.savedCigarettesTotal(completedSlice, baseline.value) : 0;
+  const savingDays = completedHistory.filter((r) => r.day > firstDay);
+  const savingSlice = completedSlice.filter((r) => r.day > firstDay);
+  const totalSaved = baseline.value ? sm.savedCigarettesTotal(savingDays, baseline.value) : 0;
+  const savedInPeriod = baseline.value ? sm.savedCigarettesTotal(savingSlice, baseline.value) : 0;
 
   // ── Render testo ─────────────────────────────────────────
   const hero = root.querySelector("#hero-ma7");
@@ -467,7 +480,7 @@ async function refresh(root, counter) {
   }
 
   // Saved section: serve una baseline e almeno un giorno concluso
-  const canShowSaved = !!baseline.value && completedHistory.length > 0;
+  const canShowSaved = !!baseline.value && savingDays.length > 0;
   const savedSection = root.querySelector("#saved-section");
   savedSection.classList.toggle("hidden", !canShowSaved);
 
@@ -497,8 +510,8 @@ async function refresh(root, counter) {
   drawHourly(root.querySelector("#chart-hourly"), hourBuckets, peakH.hour);
   drawWeekday(root.querySelector("#chart-weekday"), wdayBuckets, peakW.wday);
   if (canShowSaved) {
-    const histCumSaved = sm.savedCigarettesCumulative(completedHistory, baseline.value);
-    drawSaved(root.querySelector("#chart-saved"), completedHistory, histCumSaved);
+    const histCumSaved = sm.savedCigarettesCumulative(savingDays, baseline.value);
+    drawSaved(root.querySelector("#chart-saved"), savingDays, histCumSaved);
     root.querySelector("#saved-note").textContent =
       `Baseline: ${sm.fmtNum(baseline.value, 1)} sig/g (${labelBaselineSource(baseline.source)}) · totale evitate: ${sm.fmtNum(totalSaved)} · il giorno in corso viene conteggiato a fine giornata`;
   }
@@ -1034,12 +1047,15 @@ async function refreshList(root, active, items) {
   const perWeek = days > 0 ? total / days * 7 : 0;
 
   // Confronto con la finestra precedente di pari durata (solo se interamente osservata).
+  // Solo giorni conclusi: oggi parziale falserebbe il confronto.
   let cmp = { deltaPct: null };
+  const closedSlice = slice.filter((r) => r.day < today);
+  const closedDays = closedSlice.length;
   const prevTo = sm.startOfDayPlus(periodFrom, -1);
-  const prevFrom = sm.startOfDayPlus(prevTo, -(days - 1));
-  if (state.period !== "all" && prevFrom >= firstDay) {
+  const prevFrom = sm.startOfDayPlus(prevTo, -(closedDays - 1));
+  if (state.period !== "all" && closedDays > 0 && prevFrom >= firstDay) {
     const prevTotal = sm.buildDailySeries(allTaps, prevFrom, prevTo).reduce((a, r) => a + r.n, 0);
-    cmp = sm.compareSums(total, prevTotal);
+    cmp = sm.compareSums(closedSlice.reduce((a, r) => a + r.n, 0), prevTotal);
   }
 
   root.querySelector("#l-total").textContent = sm.fmtNum(total);

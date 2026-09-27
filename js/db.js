@@ -186,13 +186,6 @@ export async function getLatestTapFor(c) {
   return latest.filter(Boolean).sort((a, b) => b.timestamp - a.timestamp)[0] || null;
 }
 
-export async function removeLatestTapFor(c) {
-  const latest = await getLatestTapFor(c);
-  if (!latest) return null;
-  await deleteTap(latest.id);
-  return latest;
-}
-
 // Sposta le voci di una lista sotto un'altra (merge/dedup di liste duplicate o
 // allineamento dell'uid al primo sync). updatedAt esplicito: la modifica deve
 // vincere l'LWW sugli altri device.
