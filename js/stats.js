@@ -109,7 +109,7 @@ function buildSkeleton(counter) {
     <div class="pt-2 pb-2">
       <div class="text-on-surface-variant text-sm">Contatore</div>
       <div class="font-display font-bold text-2xl text-on-surface flex items-center gap-2">
-        <span class="w-3 h-3 rounded-full" style="background:${counter.color}"></span>
+        <span class="w-3 h-3 rounded-full" style="background:${db.safeColor(counter.color)}"></span>
         ${escapeHtml(counter.name)}
       </div>
     </div>
@@ -622,7 +622,9 @@ function drawTrend(el, slice, ma7Slice, ma30Slice, target, unit = "sig") {
     dataLabels: { enabled: false },
     xaxis: {
       type: "datetime",
-      labels: { format: "d MMM", style: { fontSize: "10px", colors: "#5a4a4a" }, hideOverlappingLabels: true },
+      // Timestamp a mezzanotte locale: senza datetimeUTC:false il tooltip li
+      // formatta in UTC e mostra il giorno prima.
+      labels: { format: "d MMM", datetimeUTC: false, style: { fontSize: "10px", colors: "#5a4a4a" }, hideOverlappingLabels: true },
       axisBorder: { show: false },
       axisTicks: { show: false },
       tickAmount: Math.min(6, Math.max(2, slice.length - 1)),
@@ -882,7 +884,7 @@ async function renderListStats(root, active) {
     <div class="pt-2 pb-2">
       <div class="text-on-surface-variant text-sm">Contatore</div>
       <div class="font-display font-bold text-2xl text-on-surface flex items-center gap-2">
-        <span class="w-3 h-3 rounded-full" style="background:${active.color}"></span>
+        <span class="w-3 h-3 rounded-full" style="background:${db.safeColor(active.color)}"></span>
         ${escapeHtml(active.name)}
       </div>
       <select id="item-filter" aria-label="Filtra per voce"
@@ -1082,7 +1084,7 @@ async function refreshList(root, active, items) {
     root.querySelector("#stale-list").innerHTML = stale.map((r) => `
       <div class="flex items-center justify-between py-1.5">
         <span class="flex items-center gap-2 min-w-0">
-          <span class="w-2.5 h-2.5 rounded-full flex-shrink-0" style="background:${r.item.color}"></span>
+          <span class="w-2.5 h-2.5 rounded-full flex-shrink-0" style="background:${db.safeColor(r.item.color)}"></span>
           <span class="font-semibold text-on-surface truncate">${escapeHtml(r.item.name)}</span>
         </span>
         <span class="text-sm text-on-surface-variant flex-shrink-0">${r.last ? daysAgoLabel(r.last, now) : "mai"}</span>
@@ -1159,7 +1161,7 @@ function drawRanking(el, rows) {
         dataLabels: { position: "top" },
       },
     },
-    colors: rows.map((r) => r.item.color),
+    colors: rows.map((r) => db.safeColor(r.item.color)),
     legend: { show: false },
     dataLabels: {
       enabled: true,

@@ -69,6 +69,23 @@ export function nameKey(c) {
   return `${c.parentUid || ""}\u0000${name}`;
 }
 
+// Chiave per le fusioni automatiche (import/sync, "Unisci duplicati"): include
+// il tipo, così un contatore semplice e una lista omonimi non vengono mai fusi
+// (i tap del semplice o le voci della lista finirebbero invisibili).
+// Deve restare allineata a dedupCountersByName() in api/sync.php.
+export function dedupKey(c) {
+  const k = nameKey(c);
+  if (!k) return "";
+  return `${isList(c) ? "L" : "C"}\u0000${k}`;
+}
+
+const COLOR_RE = /^#[0-9a-f]{3,8}$/i;
+// Il colore finisce in attributi style= dei template: mai fidarsi di un valore
+// arrivato da import o sync.
+export function safeColor(color, fallback = PALETTE[0]) {
+  return typeof color === "string" && COLOR_RE.test(color) ? color : fallback;
+}
+
 function newUid() {
   if (crypto && typeof crypto.randomUUID === "function") return crypto.randomUUID();
   return "u-" + Date.now().toString(36) + "-" + Math.random().toString(36).slice(2, 10);
@@ -200,8 +217,21 @@ export async function updateCounter(id, patch) {
 }
 
 export async function renameCounter(id, newName) {
-  if (await isTombstoned(id)) return;
-  await db.counters.update(id, { name: newName.trim(), updatedAt: Date.now() });
+  const c = await db.counters.get(id);
+  if (!c || c.deletedAt) return;
+  const name = newName.trim();
+  // Stesso controllo di addCounter: due fratelli omonimi verrebbero fusi (e i
+  // tap spostati) in modo irreversibile al primo sync.
+  const key = nameKey({ name, parentUid: c.parentUid || null });
+  const siblings = await db.counters.filter((x) => alive(x) && x.id !== id && (x.parentUid || null) === (c.parentUid || null)).toArray();
+  const existing = siblings.find((x) => nameKey(x) === key);
+  if (existing) {
+    const err = new Error(`Esiste già ${c.parentUid ? "una voce" : "un contatore"} "${existing.name}"`);
+    err.code = "DUPLICATE_NAME";
+    err.existing = existing;
+    throw err;
+  }
+  await db.counters.update(id, { name, updatedAt: Date.now() });
 }
 
 export async function setDailyTarget(id, value) {
@@ -298,6 +328,12 @@ export async function mergeCounters(canonicalId, duplicateIds) {
   await db.transaction("rw", db.counters, db.taps, async () => {
     const canonical = await db.counters.get(canonicalId);
     if (!alive(canonical)) throw new Error("Contatore canonico non valido");
+    for (const dupId of duplicateIds) {
+      const dup = await db.counters.get(dupId);
+      if (dup && isList(dup) !== isList(canonical)) {
+        throw new Error("Non si può unire una lista con un contatore semplice");
+      }
+    }
     // updatedAt "futuristico": deve battere qualsiasi updatedAt esistente nel sistema
     // (incluso il server) per evitare che LWW resusciti i tombstone.
     const [allCounters, allTaps] = await Promise.all([db.counters.toArray(), db.taps.toArray()]);
@@ -456,7 +492,7 @@ function normalizeCounter(c) {
   return {
     uid: c.uid || newUid(),
     name: String(c.name ?? "").trim() || "Senza nome",
-    color: c.color || pickColor(0),
+    color: safeColor(c.color),
     dailyTarget: Number(c.dailyTarget) || 0,
     pricePerCig: Number(c.pricePerCig) || 0,
     baselineOverride: Number(c.baselineOverride) || 0,
@@ -554,7 +590,14 @@ export async function importAll(data, mode = "merge", options = {}) {
     // Un payload di un client pre-v5 non ha parentUid: per la chiave di dedup
     // usa quello locale, altrimenti una voce "Marco" collasserebbe su un
     // contatore "Marco" di primo livello.
-    const remoteKey = (r) => nameKey(r.parentUid === undefined ? { ...r, parentUid: byUid.get(r.uid)?.parentUid } : r);
+    const remoteKey = (r) => {
+      const local = byUid.get(r.uid);
+      return dedupKey({
+        ...r,
+        parentUid: r.parentUid === undefined ? local?.parentUid : r.parentUid,
+        kind: r.kind === undefined ? local?.kind : r.kind,
+      });
+    };
 
     let nameCanonicalUid = null;
     if (dedupByName) {
@@ -582,7 +625,7 @@ export async function importAll(data, mode = "merge", options = {}) {
       for (const c of localCounters) {
         if (c.deletedAt) continue;
         if (remoteUids.has(c.uid)) continue;
-        const k = nameKey(c);
+        const k = dedupKey(c);
         if (!k) continue;
         // Allinea solo al canonical remoto del gruppo, non a uno dei duplicati
         if (!aliveByName.has(k)) aliveByName.set(k, []);
@@ -624,7 +667,7 @@ export async function importAll(data, mode = "merge", options = {}) {
       }
 
       if (!local && dedupByName && !norm.deletedAt) {
-        const k = nameKey(norm);
+        const k = dedupKey(norm);
         const candidates = k ? aliveByName.get(k) : null;
         if (candidates && candidates.length > 0) {
           const aligned = candidates.shift();
@@ -713,7 +756,7 @@ export async function importAll(data, mode = "merge", options = {}) {
     const aliveAfterByName = new Map();
     for (const c of allCountersAfter) {
       if (c.deletedAt) continue;
-      const k = nameKey(c);
+      const k = dedupKey(c);
       if (!k) continue;
       if (!aliveAfterByName.has(k)) aliveAfterByName.set(k, []);
       aliveAfterByName.get(k).push(c);

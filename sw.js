@@ -1,6 +1,10 @@
 import { APP_VERSION } from "./js/version.js";
 
 const CACHE = `counter-${APP_VERSION}`;
+// Tailwind e i moduli esm.sh (URL già versionati) vivono in una cache NON
+// legata alla versione: se activate li cancellasse a ogni bump, la prima
+// apertura offline dopo un aggiornamento non partirebbe.
+const CDN_CACHE = "counter-cdn";
 const ASSETS = [
   "./",
   "./index.html",
@@ -30,14 +34,40 @@ const ALLOWED_CDN = [
 ];
 
 self.addEventListener("install", (e) => {
-  e.waitUntil(caches.open(CACHE).then((c) => c.addAll(ASSETS)));
+  e.waitUntil((async () => {
+    const c = await caches.open(CACHE);
+    // cache:"reload": salta la cache HTTP, altrimenti la nuova versione può
+    // precacheare JS/CSS vecchi.
+    await c.addAll(ASSETS.map((u) => new Request(u, { cache: "reload" })));
+    await migrateCdnEntries();
+  })());
   self.skipWaiting();
 });
+
+// Le versioni <= v42 tenevano i file CDN nella cache versionata: copiali in
+// CDN_CACHE prima che activate la cancelli.
+async function migrateCdnEntries() {
+  const cdn = await caches.open(CDN_CACHE);
+  for (const k of await caches.keys()) {
+    if (!k.startsWith("counter-v")) continue;
+    const old = await caches.open(k);
+    for (const req of await old.keys()) {
+      if (!isCdn(req.url) || await cdn.match(req)) continue;
+      const res = await old.match(req);
+      if (res) await cdn.put(req, res);
+    }
+  }
+}
+
+function isCdn(url) {
+  return ALLOWED_CDN.some((o) => url.startsWith(o));
+}
 
 self.addEventListener("activate", (e) => {
   e.waitUntil(
     caches.keys().then((keys) =>
-      Promise.all(keys.filter((k) => k !== CACHE).map((k) => caches.delete(k)))
+      // Solo le nostre cache: l'origine è condivisa con il resto del sito.
+      Promise.all(keys.filter((k) => k.startsWith("counter-") && k !== CACHE && k !== CDN_CACHE).map((k) => caches.delete(k)))
     )
   );
   self.clients.claim();
@@ -51,13 +81,13 @@ self.addEventListener("fetch", (e) => {
   if (sameOrigin && url.pathname.includes("/api/")) return;
   if (req.method !== "GET") return;
 
-  const allowedCdn = ALLOWED_CDN.some((o) => req.url.startsWith(o));
+  const allowedCdn = isCdn(req.url);
   if (!sameOrigin && !allowedCdn) return;
 
   const isAppShell = sameOrigin && /\.(html|js|css|webmanifest)$|\/$/.test(url.pathname);
 
   e.respondWith(
-    isAppShell ? networkFirst(req) : staleWhileRevalidate(req)
+    isAppShell ? networkFirst(req) : staleWhileRevalidate(req, allowedCdn ? CDN_CACHE : CACHE)
   );
 });
 
@@ -85,13 +115,13 @@ function networkFirst(req) {
     });
 }
 
-function staleWhileRevalidate(req) {
+function staleWhileRevalidate(req, cacheName) {
   return caches.match(req).then((cached) => {
     const fetched = fetch(req)
       .then((res) => {
         if (res.ok || res.type === "opaque") {
           const copy = res.clone();
-          caches.open(CACHE).then((c) => c.put(req, copy));
+          caches.open(cacheName).then((c) => c.put(req, copy));
         }
         return res;
       })

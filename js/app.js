@@ -96,7 +96,7 @@ async function renderDrawerList() {
     row.type = "button";
     row.className = "drawer-counter w-full text-left" + (c.id === activeId ? " active" : "");
     row.innerHTML = `
-      <span class="dot" style="background:${c.color}"></span>
+      <span class="dot" style="background:${db.safeColor(c.color)}"></span>
       <span class="meta">
         <span class="name block truncate">${escapeHtml(c.name)}</span>
         <span class="sub">${sub}</span>
@@ -300,7 +300,9 @@ async function main() {
 
   if ("serviceWorker" in navigator) {
     try {
-      await navigator.serviceWorker.register("./sw.js", { type: "module" });
+      // updateViaCache "none": version.js (importato da sw.js) va sempre
+      // riverificato in rete, altrimenti l'update arriva con 24-48h di ritardo.
+      await navigator.serviceWorker.register("./sw.js", { type: "module", updateViaCache: "none" });
       renderVersionFooter();
     } catch (err) {
       console.warn("SW registration failed:", err);

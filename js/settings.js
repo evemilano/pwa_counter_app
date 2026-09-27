@@ -203,7 +203,7 @@ function renderCounterList(root, counters, activeId, itemCounts) {
       </div>` : simpleOptionsHtml(c);
     row.innerHTML = `
       <div class="flex items-center gap-3">
-        <span class="w-3 h-3 rounded-full flex-shrink-0" style="background:${c.color}"></span>
+        <span class="w-3 h-3 rounded-full flex-shrink-0" style="background:${db.safeColor(c.color)}"></span>
         <input type="text" class="flex-1 min-w-0 bg-transparent text-on-surface font-semibold focus:outline-none px-1 py-1 rounded focus:bg-surface-container-low"
           value="${escapeHtml(c.name)}" maxlength="40" data-rename="${c.id}">
         ${isActive ? `<span class="text-xs font-semibold bg-primary-fixed text-primary px-2 py-1 rounded-full">attivo</span>` : ""}
@@ -253,7 +253,13 @@ function wireCounterList(list, counters) {
       const v = input.value.trim();
       if (!v) { input.value = original; return; }
       if (v === original) return;
-      await db.renameCounter(id, v);
+      try {
+        await db.renameCounter(id, v);
+      } catch (e) {
+        input.value = original;
+        toast(e.code === "DUPLICATE_NAME" ? `Esiste già: ${e.existing.name}` : (e.message || "Errore"));
+        return;
+      }
       original = v;
       toast("Rinominato");
       notifyDataChanged();
@@ -469,7 +475,7 @@ async function findDuplicateGroups() {
   const counters = await db.listAllCounters();
   const byName = new Map();
   for (const c of counters) {
-    const k = db.nameKey(c);
+    const k = db.dedupKey(c);
     if (!k) continue;
     if (!byName.has(k)) byName.set(k, []);
     byName.get(k).push(c);

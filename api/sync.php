@@ -121,6 +121,7 @@ if ($method === 'PUT' || $method === 'POST') {
     $data = is_array($payload['data']) ? $payload['data'] : [];
     $data = keepCounterKinds($data, $current['data']);
     $data = dedupCountersByName($data);
+    $data = sanitizeCounterColors($data);
     $payload['data'] = $data;
 
     $new = [
@@ -155,6 +156,19 @@ function keepCounterKinds(array $data, $current): array {
     return $data;
 }
 
+// Il colore finisce in attributi style= lato client: accetta solo #rgb…#rrggbbaa,
+// altrimenti un payload malevolo diventerebbe XSS su tutti i device sincronizzati.
+function sanitizeCounterColors(array $data): array {
+    if (!isset($data['counters']) || !is_array($data['counters'])) return $data;
+    foreach ($data['counters'] as $i => $c) {
+        if (!is_array($c) || !array_key_exists('color', $c)) continue;
+        if (!is_string($c['color']) || !preg_match('/^#[0-9a-fA-F]{3,8}$/', $c['color'])) {
+            $data['counters'][$i]['color'] = '#6366f1';
+        }
+    }
+    return $data;
+}
+
 function dedupCountersByName(array $data): array {
     if (!isset($data['counters']) || !is_array($data['counters'])) return $data;
     $counters = $data['counters'];
@@ -181,7 +195,10 @@ function dedupCountersByName(array $data): array {
         $name = strtolower(trim((string)($c['name'] ?? '')));
         if ($name === '') continue;
         // Le voci di una lista (parentUid) sono uniche solo dentro la lista.
-        $k = (string)($c['parentUid'] ?? '') . "\0" . $name;
+        // Il tipo fa parte della chiave: un contatore semplice e una lista
+        // omonimi non vanno mai fusi (tap o voci finirebbero invisibili).
+        $cls = (($c['kind'] ?? 'simple') === 'list') ? 'L' : 'C';
+        $k = (string)($c['parentUid'] ?? '') . "\0" . $cls . "\0" . $name;
         if (!isset($groups[$k])) $groups[$k] = [];
         $groups[$k][] = $i;
     }

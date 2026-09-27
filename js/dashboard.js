@@ -245,9 +245,13 @@ async function renderListDashboard(root, active) {
           const v = input.value.trim();
           if (!v) { input.value = original; return; }
           if (v === original) return;
-          const dup = (await db.listItems(active)).find((x) => x.id !== id && db.nameKey(x) === db.nameKey({ name: v, parentUid: active.uid }));
-          if (dup) { toast(`Esiste già: ${dup.name}`); input.value = original; return; }
-          await db.renameCounter(id, v);
+          try {
+            await db.renameCounter(id, v);
+          } catch (e) {
+            input.value = original;
+            toast(e.code === "DUPLICATE_NAME" ? `Esiste già: ${e.existing.name}` : (e.message || "Errore"));
+            return;
+          }
           original = v;
           toast("Rinominato");
           notifyDataChanged();
@@ -351,7 +355,7 @@ function itemRowHtml(r, index, now) {
   return `
     <button type="button" class="item-row" data-tap-item="${item.id}" aria-label="+1 ${escapeHtml(item.name)}">
       <span class="rank">${total > 0 ? index + 1 : ""}</span>
-      <span class="avatar" style="background:${item.color}">${escapeHtml(initial(item.name))}</span>
+      <span class="avatar" style="background:${db.safeColor(item.color)}">${escapeHtml(initial(item.name))}</span>
       <span class="meta">
         <span class="name block truncate">${escapeHtml(item.name)}</span>
         <span class="sub block truncate">${lastText}${month > 0 ? ` · ${month} questo mese` : ""}</span>
@@ -364,7 +368,7 @@ function editRowHtml(r) {
   const { item } = r;
   return `
     <div class="item-row editing">
-      <span class="avatar" style="background:${item.color}">${escapeHtml(initial(item.name))}</span>
+      <span class="avatar" style="background:${db.safeColor(item.color)}">${escapeHtml(initial(item.name))}</span>
       <input type="text" class="rename" value="${escapeHtml(item.name)}" maxlength="40" data-rename-item="${item.id}" aria-label="Nome">
       <button type="button" class="del" data-delete-item="${item.id}" aria-label="Elimina ${escapeHtml(item.name)}">
         <span class="material-symbols-outlined">delete</span>

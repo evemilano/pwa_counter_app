@@ -34,7 +34,7 @@ export async function renderHistory(root) {
     <div class="pt-2">
       <div class="text-on-surface-variant text-sm">Contatore</div>
       <div class="font-display font-bold text-2xl text-on-surface flex items-center gap-2 mb-1">
-        <span class="w-3 h-3 rounded-full" style="background:${active.color}"></span>
+        <span class="w-3 h-3 rounded-full" style="background:${db.safeColor(active.color)}"></span>
         ${escapeHtml(active.name)}
       </div>
       <p class="text-on-surface-variant text-sm">${itemsById ? `Cronologia di tutti i tap delle voci di ${escapeHtml(active.name)}` : "Cronologia di tutti i tap registrati"}</p>
