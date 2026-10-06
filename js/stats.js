@@ -135,6 +135,14 @@ function buildSkeleton(counter) {
       <div class="text-xs text-on-surface-variant mt-2" id="hero-slope">—</div>
     </div>
 
+    <!-- Giorni a zero nel periodo -->
+    <div class="stat-card mt-3">
+      <span class="material-symbols-outlined text-primary" style="font-size:20px">block</span>
+      <div class="label mt-1">Giorni con 0</div>
+      <div class="value" id="kpi-zero">—</div>
+      <div class="sub" id="kpi-zero-sub"></div>
+    </div>
+
     <!-- KPI 2x2 -->
     <div class="grid grid-cols-2 gap-3 mt-3">
       <div class="stat-card">
@@ -386,6 +394,13 @@ async function refresh(root, counter) {
   } else {
     slopeEl.textContent = trend ? `Trend stabile (${periodLabel})` : "Trend non ancora calcolabile";
   }
+
+  // Giorni a zero: solo giorni conclusi del periodo (oggi a 0 non è ancora un giorno a 0).
+  const zeroDays = completedSlice.filter((r) => r.n === 0).length;
+  root.querySelector("#kpi-zero").textContent = completedSlice.length > 0 ? String(zeroDays) : "—";
+  root.querySelector("#kpi-zero-sub").textContent = completedSlice.length > 0
+    ? `su ${completedSlice.length} giorni conclusi (${Math.round((zeroDays / completedSlice.length) * 100)}%)`
+    : "nessun giorno concluso";
 
   root.querySelector("#kpi-total").textContent = sm.fmtNum(totalPeriod);
   const kpiTotalSub = root.querySelector("#kpi-total-sub");
