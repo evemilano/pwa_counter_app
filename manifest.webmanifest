@@ -18,14 +18,14 @@
   ],
   "screenshots": [
     {
-      "src": "screen/evemilano.com_cntr_desktop.png",
+      "src": "screen/counter-desktop.png",
       "sizes": "2560x1600",
       "type": "image/png",
       "form_factor": "wide",
       "label": "Counter dashboard su desktop"
     },
     {
-      "src": "screen/evemilano.com_cntr_.png",
+      "src": "screen/counter-mobile.png",
       "sizes": "1500x2668",
       "type": "image/png",
       "form_factor": "narrow",

@@ -72,7 +72,6 @@ export function nameKey(c) {
 // Chiave per le fusioni automatiche (import/sync, "Unisci duplicati"): include
 // il tipo, così un contatore semplice e una lista omonimi non vengono mai fusi
 // (i tap del semplice o le voci della lista finirebbero invisibili).
-// Deve restare allineata a dedupCountersByName() in api/sync.php.
 export function dedupKey(c) {
   const k = nameKey(c);
   if (!k) return "";
@@ -421,9 +420,7 @@ async function setLastCounterByUid(uid) {
   if (found) setLastCounterId(found.id);
 }
 
-const SYNC_CFG_KEY = "contaapp:syncConfig";
-
-export async function exportAll({ includeSyncCredentials = true } = {}) {
+export async function exportAll() {
   const [counters, taps] = await Promise.all([
     db.counters.toArray(),
     db.taps.toArray(),
@@ -458,17 +455,6 @@ export async function exportAll({ includeSyncCredentials = true } = {}) {
   const settings = {};
   const lastUid = await getLastCounterUid();
   if (lastUid) settings.lastCounterUid = lastUid;
-  if (includeSyncCredentials) {
-    try {
-      const raw = localStorage.getItem(SYNC_CFG_KEY);
-      if (raw) {
-        const cfg = JSON.parse(raw);
-        if (cfg && cfg.endpoint && cfg.token) {
-          settings.sync = { endpoint: cfg.endpoint, token: cfg.token };
-        }
-      }
-    } catch {}
-  }
 
   const payload = {
     app: "contaapp",
@@ -803,14 +789,10 @@ export async function importAll(data, mode = "merge", options = {}) {
   });
 }
 
+// settings.sync (endpoint + token dei backup delle versioni con sync, <= v45)
+// viene ignorato di proposito: l'app non invia dati a nessun server.
 async function applyImportedSettings(settings, uidToId) {
   if (!settings) return;
-  if (settings.sync && settings.sync.endpoint && settings.sync.token) {
-    localStorage.setItem(SYNC_CFG_KEY, JSON.stringify({
-      endpoint: settings.sync.endpoint,
-      token: settings.sync.token,
-    }));
-  }
   if (settings.lastCounterUid) {
     const id = uidToId.get(settings.lastCounterUid);
     if (id != null) setLastCounterId(id);

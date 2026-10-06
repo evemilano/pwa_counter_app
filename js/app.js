@@ -3,7 +3,6 @@ import { renderDashboard } from "./dashboard.js";
 import { renderStats } from "./stats.js";
 import { renderHistory } from "./history.js";
 import { renderSettings } from "./settings.js";
-import * as sync from "./sync.js";
 import { APP_VERSION } from "./version.js";
 
 export { APP_VERSION };
@@ -142,8 +141,8 @@ document.getElementById("drawer-new-name").addEventListener("keydown", (e) => {
 
 bus.addEventListener("data-changed", (e) => {
   // C1: chi ha già aggiornato il DOM in-place (dashboard +1/undo) chiede di
-  // saltare il re-render globale per preservare animazione e focus, ma lascia
-  // partire scheduleSync e altri listener del bus.
+  // saltare il re-render globale per preservare animazione e focus, ma gli
+  // altri listener del bus (cache di Statistiche) ricevono comunque l'evento.
   if (e.detail?.skipViewRefresh) return;
   // C3: se l'utente sta digitando dentro la view corrente, posticipiamo il
   // re-render finché non perde focus. Senza questa guardia, un pull remoto
@@ -221,7 +220,7 @@ async function handleShortcut() {
     return false;
   }
   db.setLastCounterId(counterId);
-  // C1: schedula il push remoto del tap dello shortcut. skipViewRefresh perché
+  // C1: avvisa gli altri listener del bus. skipViewRefresh perché
   // show("dashboard") che segue renderà comunque la view.
   notifyDataChanged({ skipViewRefresh: true });
   const c = counters.find((c) => c.id === counterId);
@@ -286,11 +285,12 @@ async function main() {
   // Statistiche non traccia più le aperture: un giorno senza tap è un giorno a
   // zero sigarette. Ripuliamo la chiave lasciata dalle versioni precedenti.
   try { localStorage.removeItem("contaapp:appOpens"); } catch {}
-  // Avvia subito sync.init (registra listener + lancia syncNow in background).
-  // NON aspettiamo: se la rete è lenta o il server lento, l'UI deve comunque
-  // partire — la race "DB vuoto durante pull" è mitigata da Fix 3 (post-import
-  // collapse) e Fix 6 (dedup server-side).
-  sync.init();
+  // La sync con server è stata rimossa (v46): niente endpoint né token devono
+  // restare salvati sul dispositivo.
+  try {
+    localStorage.removeItem("contaapp:syncConfig");
+    localStorage.removeItem("contaapp:syncState");
+  } catch {}
   db.requestPersistentStorage();
 
   await handleShortcut();

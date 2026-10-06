@@ -6,7 +6,7 @@ whatever you want to track. Multi-counter, fully **offline**, **installable** on
 with statistics, charts, history and JSON backup. **No account, no tracking, no cloud** — all your data
 stays on your device.
 
-> Live demo: **https://www.evemilano.com/cntr/**
+> Live demo: **https://evemilano.github.io/pwa_counter_app/**
 > Repository: **https://github.com/evemilano/pwa_counter_app**
 
 ![Counter PWA dashboard with large tap-to-increment button](screen/shot-dashboard.png)
@@ -80,7 +80,7 @@ Typical use cases:
 
 ### Android (Chrome, Edge, Samsung Internet, Brave)
 
-1. Open **https://www.evemilano.com/cntr/** in the browser
+1. Open **https://evemilano.github.io/pwa_counter_app/** in the browser
 2. Tap the **Install** prompt, or open the menu and choose **Install app** / **Add to Home screen**
 3. Launch from the home-screen icon — it opens in standalone mode, no browser chrome
 4. Long-press the icon to use the **"+1 last counter"** shortcut
@@ -196,7 +196,8 @@ Compound index on `[counterId+timestamp]` powers all the range queries used by s
 ## Backup, import & privacy
 
 - **Export** — Settings → Backup → **Export JSON**. Produces a file
-  `contaapp-YYYY-MM-DD-HH-MM-SS.json` containing all counters and taps plus a schema version
+  `counter-YYYY-MM-DD-HH-MM-SS.json` containing all counters and taps plus a schema version.
+  It is your only backup: there is no server copy, so keep it somewhere safe
 - **Import** — Settings → Backup → **Import JSON**. Choose between:
   - **Replace** — wipe everything and load from the file
   - **Merge** — keep existing data, append by name, deduplicate taps by `(counterId, timestamp)`
@@ -232,7 +233,7 @@ browsers from 2020 onward.
   the `<title>` in `index.html` and the top-bar title
 - **Icons** — replace files in `icons/` keeping the same dimensions (192, 512, maskable 512, shortcut 96)
 - **Default palette** — edit the `PALETTE` array at the top of `js/db.js`
-- **Cache version** — bump `CACHE` in `sw.js` whenever you ship changes to force update
+- **Cache version** — bump `APP_VERSION` in `js/version.js` whenever you ship changes to force update
 
 ---
 

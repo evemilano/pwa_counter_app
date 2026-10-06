@@ -122,7 +122,7 @@ export async function renderDashboard(root) {
     const d = newCount - yesterdayCount;
     diffEl.textContent = d === 0 ? "= rispetto a ieri" : `${d > 0 ? "+" : ""}${d} rispetto a ieri`;
     btnUndo.classList.remove("invisible");
-    // C1: schedula sync push senza distruggere l'animazione/il focus locale.
+    // C1: avvisa il bus (cache Statistiche) senza distruggere l'animazione/il focus locale.
     notifyDataChanged({ skipViewRefresh: true });
   });
 
@@ -309,7 +309,7 @@ async function renderListDashboard(root, active) {
       return;
     }
     await refreshList(item.id);
-    // C1: aggiornato in-place, schedula solo la sync.
+    // C1: aggiornato in-place, avvisa solo il bus.
     notifyDataChanged({ skipViewRefresh: true });
   }
 

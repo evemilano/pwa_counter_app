@@ -27,9 +27,9 @@ function themeColor(name) {
 }
 
 // La cache va invalidata a ogni mutazione, non solo per TTL: +1 dalla dashboard,
-// delete in Cronologia o import da un pull remoto. Senza questo, entrando in
+// delete in Cronologia o import di un backup. Senza questo, entrando in
 // Statistiche entro CACHE_TTL si rileggerebbe l'array stantio.
-// Registrazione lazy (come sync.init): stats.js viene valutato prima di app.js
+// Registrazione lazy: stats.js viene valutato prima di app.js
 // per l'import circolare, quindi `bus` a top-level sarebbe in TDZ.
 let busHooked = false;
 function hookBus() {

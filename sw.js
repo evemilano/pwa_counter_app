@@ -17,7 +17,6 @@ const ASSETS = [
   "./js/stats-math.js",
   "./js/history.js",
   "./js/settings.js",
-  "./js/sync.js",
   "./js/version.js",
   "./icons/icon-192.png",
   "./icons/icon-512.png",
@@ -78,7 +77,6 @@ self.addEventListener("fetch", (e) => {
   const url = new URL(req.url);
   const sameOrigin = url.origin === self.location.origin;
 
-  if (sameOrigin && url.pathname.includes("/api/")) return;
   if (req.method !== "GET") return;
 
   const allowedCdn = isCdn(req.url);
