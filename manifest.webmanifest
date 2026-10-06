@@ -1,5 +1,5 @@
 {
-  "id": "/cntr/",
+  "id": "./",
   "name": "Counter",
   "short_name": "Counter",
   "description": "Multi-counter PWA per contare quante volte fai una cosa al giorno. Statistiche, cronologia, offline.",
